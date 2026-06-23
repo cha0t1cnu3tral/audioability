@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
+from audioability.accessibility.filtering import FocusEventFilter
 from audioability.accessibility.models import AccessibleNode
 
 
@@ -32,9 +33,11 @@ class AtSpiAccessibilityBackend:
         *,
         event_types: Sequence[str] = ("object:state-changed:focused",),
         on_focus: Callable[[AccessibleNode], None] | None = None,
+        event_filter: FocusEventFilter | None = None,
     ) -> None:
         self.event_types = tuple(event_types)
         self.on_focus = on_focus
+        self.event_filter = event_filter or FocusEventFilter()
 
     def start(self) -> None:
         try:
@@ -53,14 +56,16 @@ class AtSpiAccessibilityBackend:
         if self.on_focus is None:
             return
 
-        source = event.source
-        self.on_focus(
-            AccessibleNode(
-                name=self._read_text_attribute(source, "name"),
-                role=self._read_role(source),
-                description=self._read_text_attribute(source, "description"),
-            )
+        source = getattr(event, "source", None)
+        node = AccessibleNode(
+            name=self._read_text_attribute(source, "name"),
+            role=self._read_role(source),
+            description=self._read_text_attribute(source, "description"),
         )
+        if not self.event_filter.accepts(event, node):
+            return
+
+        self.on_focus(node)
 
     @staticmethod
     def _read_text_attribute(source: Any, attribute: str) -> str:
