@@ -14,6 +14,22 @@ uv run mypy
 uv run audioability --help
 ```
 
+## Run on Linux
+
+Copy `dist/audioability-linux.run` to a Linux desktop machine, then run:
+
+```bash
+chmod +x audioability-linux.run
+./audioability-linux.run --dry-run
+./audioability-linux.run
+```
+
+The Linux runner detects common package managers (`apt-get`, `dnf`, `pacman`, or
+`zypper`), installs AT-SPI and speech packages, unpacks Audioability into
+`~/.local/share/audioability`, creates a venv with access to system accessibility
+packages, and starts the screen reader. Use `--no-system-packages` if you already
+installed the desktop accessibility packages yourself.
+
 On Linux, the real accessibility backend will need AT-SPI and speech services from the
 system package manager. Common packages include:
 
@@ -22,6 +38,7 @@ system package manager. Common packages include:
 - `at-spi2-core`
 - `speech-dispatcher`
 - `python3-speechd`
+- Arch: `python-atspi`, `python-gobject`, `at-spi2-core`, `speech-dispatcher`, `espeak-ng`
 
 Exact package names vary by distribution.
 

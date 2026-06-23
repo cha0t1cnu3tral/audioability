@@ -8,6 +8,8 @@ class CommandName(StrEnum):
     QUIT = "quit"
     READ_FOCUS = "read-focus"
     READ_WINDOW = "read-window"
+    REPEAT_LAST = "repeat-last"
+    STOP_SPEECH = "stop-speech"
 
 
 @dataclass(frozen=True)

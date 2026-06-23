@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 from typing import Protocol
 
 
@@ -21,7 +23,14 @@ class NullSpeechDriver:
 
 
 class SpeechDispatcherDriver:
-    """Speech Dispatcher driver placeholder."""
+    """Speech Dispatcher driver using spd-say when available."""
+
+    def __init__(self, executable: str = "spd-say") -> None:
+        self.executable = executable
 
     def speak(self, text: str) -> None:
-        raise NotImplementedError("Speech Dispatcher integration has not been implemented yet.")
+        if shutil.which(self.executable):
+            subprocess.run([self.executable, text], check=False)
+            return
+
+        print(f"[speech fallback] {text}")
