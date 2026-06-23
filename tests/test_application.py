@@ -54,3 +54,30 @@ def test_repeat_last_command_repeats_last_spoken_text() -> None:
 
     assert handled is True
     assert speech.messages == ["Search entry", "Search entry"]
+
+
+def test_router_repeat_repeats_last_spoken_text() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
+
+    assert app.router.run("repeat") is True
+    assert speech.messages == ["Search entry", "Search entry"]
+
+
+def test_router_focus_speaks_current_focus() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
+
+    assert app.router.run("focus") is True
+    assert speech.messages == ["Search entry", "Search entry"]
+
+
+def test_router_stop_returns_false_when_driver_cannot_stop() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    assert app.router.run("stop") is False
