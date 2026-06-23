@@ -1,0 +1,42 @@
+[project]
+name = "audioability"
+version = "0.1.0"
+description = "A Python Linux screen reader focused on accessibility, speech output, and keyboard-driven workflows."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Audioability contributors" }
+]
+keywords = ["accessibility", "screen-reader", "linux", "at-spi", "speech"]
+dependencies = []
+
+[project.scripts]
+audioability = "audioability.cli:main"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.18.2",
+  "pytest>=9.0.1",
+  "ruff>=0.14.8",
+]
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
