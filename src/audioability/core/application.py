@@ -10,7 +10,7 @@ from audioability.accessibility.navigation import ObjectNavigationAction, Object
 from audioability.input.commands import (
     Command,
     CommandName,
-    command_for_key,
+    command_for_gesture,
     is_screen_reader_modifier,
 )
 from audioability.input.router import CommandRouter
@@ -94,8 +94,8 @@ class ScreenReaderApplication:
 
         return False
 
-    def handle_key(self, key: str) -> bool:
-        command = command_for_key(key)
+    def handle_key(self, key: str, modifiers: tuple[str, ...] = ()) -> bool:
+        command = command_for_gesture((*modifiers, key))
         if command is None:
             return False
 

@@ -1,9 +1,28 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
 SCREEN_READER_MODIFIER_KEYS = ("capslock", "insert")
+KEY_ALIASES = {
+    "capslock": "capslock",
+    "control": "control",
+    "controll": "control",
+    "controlr": "control",
+    "ctrl": "control",
+    "leftcontrol": "control",
+    "rightcontrol": "control",
+    "shift": "shift",
+    "shiftl": "shift",
+    "shiftr": "shift",
+    "leftshift": "shift",
+    "rightshift": "shift",
+    "insert": "insert",
+    "ins": "insert",
+    "return": "enter",
+    "escape": "esc",
+}
 
 
 class CommandName(StrEnum):
@@ -106,9 +125,20 @@ DEFAULT_COMMAND_BINDINGS = (
 
 
 def command_for_key(key: str) -> Command | None:
-    normalized = _normalize_key(key)
-    if normalized in {"control", "ctrl", "controll", "controlr", "leftcontrol", "rightcontrol"}:
-        return Command(CommandName.STOP_SPEECH, "Stop current speech.")
+    return command_for_gesture((key,))
+
+
+def command_for_gesture(keys: Iterable[str]) -> Command | None:
+    normalized_keys = frozenset(filter(None, (_normalize_key(key) for key in keys)))
+    if not normalized_keys:
+        return None
+
+    for binding in DEFAULT_COMMAND_BINDINGS:
+        if _binding_matches(binding.desktop_key, normalized_keys) or _binding_matches(
+            binding.laptop_key,
+            normalized_keys,
+        ):
+            return Command(binding.name, binding.meaning)
 
     return None
 
@@ -117,5 +147,16 @@ def is_screen_reader_modifier(key: str) -> bool:
     return _normalize_key(key) in SCREEN_READER_MODIFIER_KEYS
 
 
+def _binding_matches(binding_key: str, keys: frozenset[str]) -> bool:
+    binding_parts = frozenset(_normalize_key(part) for part in binding_key.split("+"))
+    if "sr" not in binding_parts:
+        return binding_parts == keys
+
+    required_keys = binding_parts - {"sr"}
+    pressed_reader_modifiers = keys.intersection(SCREEN_READER_MODIFIER_KEYS)
+    return bool(pressed_reader_modifiers) and keys - pressed_reader_modifiers == required_keys
+
+
 def _normalize_key(key: str) -> str:
-    return key.lower().replace("_", "").replace("-", "")
+    normalized = key.strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+    return KEY_ALIASES.get(normalized, normalized)

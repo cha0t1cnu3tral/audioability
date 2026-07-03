@@ -4,6 +4,7 @@ from audioability.input.commands import (
     DEFAULT_COMMAND_BINDINGS,
     SCREEN_READER_MODIFIER_KEYS,
     CommandName,
+    command_for_gesture,
     command_for_key,
     is_screen_reader_modifier,
 )
@@ -47,4 +48,28 @@ def test_control_key_maps_to_stop_speech_command() -> None:
     assert ctrl_command is not None
     assert ctrl_command.name is CommandName.STOP_SPEECH
 
-    assert command_for_key("shift") is None
+    pause_command = command_for_key("shift")
+    assert pause_command is not None
+    assert pause_command.name is CommandName.PAUSE_SPEECH
+
+
+def test_screen_reader_gestures_map_to_commands() -> None:
+    read_focus = command_for_gesture(("Caps_Lock", "Tab"))
+    assert read_focus is not None
+    assert read_focus.name is CommandName.READ_FOCUS
+
+    read_window = command_for_gesture(("Insert", "b"))
+    assert read_window is not None
+    assert read_window.name is CommandName.READ_WINDOW
+
+    status_bar = command_for_gesture(("Caps_Lock", "End"))
+    assert status_bar is not None
+    assert status_bar.name is CommandName.READ_STATUS_BAR
+
+    laptop_status_bar = command_for_gesture(("Insert", "Shift_L", "End"))
+    assert laptop_status_bar is not None
+    assert laptop_status_bar.name is CommandName.READ_STATUS_BAR
+
+
+def test_unbound_gesture_returns_none() -> None:
+    assert command_for_gesture(("Alt", "F4")) is None

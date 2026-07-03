@@ -140,6 +140,16 @@ def test_control_key_interrupts_speech() -> None:
     assert speech.stopped is True
 
 
+def test_screen_reader_key_gesture_reads_focus() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
+
+    assert app.handle_key("Tab", ("Caps_Lock",)) is True
+
+    assert speech.messages == ["Search entry", "Search entry"]
+
+
 def test_capslock_numpad_keys_navigate_objects_like_nvda_desktop_layout() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
