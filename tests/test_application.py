@@ -150,6 +150,38 @@ def test_screen_reader_key_gesture_reads_focus() -> None:
     assert speech.messages == ["Search entry", "Search entry"]
 
 
+def test_read_title_window_and_status_bar_commands() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    status = AccessibleNode(name="Ready", role="status bar")
+    root = AccessibleNode(
+        name="Downloads",
+        role="frame",
+        children=(AccessibleNode(name="Toolbar", role="panel"), status),
+    )
+    app.object_navigator.set_root(root)
+
+    assert app.handle_command(Command(CommandName.READ_TITLE, "Read title")) is True
+    assert app.handle_command(Command(CommandName.READ_WINDOW, "Read window")) is True
+    assert app.handle_command(Command(CommandName.READ_STATUS_BAR, "Read status")) is True
+
+    assert speech.messages == [
+        "Downloads",
+        "Downloads frame 2 items",
+        "Ready status bar",
+    ]
+
+
+def test_status_bar_gesture_reports_missing_status_bar() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app.object_navigator.set_root(AccessibleNode(name="Downloads", role="frame"))
+
+    assert app.handle_key("End", ("Caps_Lock",)) is True
+
+    assert speech.messages == ["No status bar"]
+
+
 def test_capslock_numpad_keys_navigate_objects_like_nvda_desktop_layout() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)

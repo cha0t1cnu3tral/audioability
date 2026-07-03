@@ -90,6 +90,12 @@ class ScreenReaderApplication:
     def handle_command(self, command: Command) -> bool:
         if command.name is CommandName.READ_FOCUS:
             return self.speak_current_focus()
+        if command.name is CommandName.READ_TITLE:
+            return self.speak_current_title()
+        if command.name is CommandName.READ_WINDOW:
+            return self.speak_current_window()
+        if command.name is CommandName.READ_STATUS_BAR:
+            return self.speak_status_bar()
         if command.name is CommandName.REPEAT_LAST:
             return self.repeat_last_spoken()
         if command.name is CommandName.STOP_SPEECH:
@@ -119,6 +125,35 @@ class ScreenReaderApplication:
             return False
 
         return self.speech_controller.speak(text, allow_duplicate=True)
+
+    def speak_current_title(self) -> bool:
+        root = self.object_navigator.root
+        if root is None or not root.name.strip():
+            return self.speech_controller.speak("No title", allow_duplicate=True)
+
+        return self.speech_controller.speak(root.name, allow_duplicate=True)
+
+    def speak_current_window(self) -> bool:
+        node = self.object_navigator.root or self.current_focus
+        if node is None:
+            return self.speech_controller.speak("No window", allow_duplicate=True)
+
+        text = self._focused_node_text(node)
+        if not text:
+            return self.speech_controller.speak("No window", allow_duplicate=True)
+
+        return self.speech_controller.speak(text, allow_duplicate=True)
+
+    def speak_status_bar(self) -> bool:
+        root = self.object_navigator.root or self.current_focus
+        status_bar = self._find_first_role(root, {"status bar", "statusbar"}) if root else None
+        if status_bar is None:
+            return self.speech_controller.speak("No status bar", allow_duplicate=True)
+
+        return self.speech_controller.speak(
+            self._focused_node_text(status_bar),
+            allow_duplicate=True,
+        )
 
     def navigate_object(self, action: ObjectNavigationAction) -> bool:
         result = self.object_navigator.run(action)
@@ -227,6 +262,21 @@ class ScreenReaderApplication:
     @staticmethod
     def _shortcut_text(node: AccessibleNode) -> str:
         return f"shortcut {node.shortcut}" if node.shortcut else ""
+
+    @staticmethod
+    def _find_first_role(
+        node: AccessibleNode,
+        roles: frozenset[str] | set[str],
+    ) -> AccessibleNode | None:
+        if node.role.casefold() in roles:
+            return node
+
+        for child in node.children:
+            found = ScreenReaderApplication._find_first_role(child, roles)
+            if found is not None:
+                return found
+
+        return None
 
     @classmethod
     def _numpad_object_navigation_action(
