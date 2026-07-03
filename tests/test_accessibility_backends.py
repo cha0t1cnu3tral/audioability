@@ -101,6 +101,41 @@ def test_atspi_backend_reads_children_from_indexable_container() -> None:
     ]
 
 
+def test_atspi_backend_dispatches_key_events_with_pressed_modifiers() -> None:
+    key_events: list[tuple[str, tuple[str, ...]]] = []
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        key_events.append((key, modifiers))
+        return True
+
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
+
+    assert (
+        backend._handle_key_event(SimpleNamespace(event_string="Caps_Lock", type="PRESS"))
+        is True
+    )
+    assert backend._handle_key_event(SimpleNamespace(event_string="Tab", type="PRESS")) is True
+    assert (
+        backend._handle_key_event(
+            SimpleNamespace(event_string="Caps_Lock", type="KEY_RELEASED_EVENT")
+        )
+        is False
+    )
+    assert backend._handle_key_event(SimpleNamespace(event_string="Tab", type="PRESS")) is True
+
+    assert key_events == [
+        ("Caps_Lock", ()),
+        ("Tab", ("capslock",)),
+        ("Tab", ()),
+    ]
+
+
+def test_atspi_backend_ignores_empty_key_events() -> None:
+    backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
+
+    assert backend._handle_key_event(SimpleNamespace(type="PRESS")) is False
+
+
 def test_atspi_backend_ignores_focus_event_without_handler() -> None:
     backend = AtSpiAccessibilityBackend()
 

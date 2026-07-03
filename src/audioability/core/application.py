@@ -73,7 +73,10 @@ class ScreenReaderApplication:
         self.accessibility_backend = accessibility_backend or (
             NullAccessibilityBackend()
             if dry_run
-            else AtSpiAccessibilityBackend(on_focus=self._speak_focused_node)
+            else AtSpiAccessibilityBackend(
+                on_focus=self._speak_focused_node,
+                on_key=self.handle_key,
+            )
         )
 
     def run(self) -> None:

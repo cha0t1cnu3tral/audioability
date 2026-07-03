@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from audioability.accessibility.filtering import FocusEventFilter
 from audioability.accessibility.models import AccessibleNode
+from audioability.input.commands import is_screen_reader_modifier, normalize_key
 
 
 class AccessibilityBackend(Protocol):
@@ -54,6 +55,7 @@ class AtSpiAccessibilityBackend:
         *,
         event_types: Sequence[str] = ("object:state-changed:focused",),
         on_focus: Callable[[AccessibleNode], None] | None = None,
+        on_key: Callable[[str, tuple[str, ...]], bool] | None = None,
         event_filter: FocusEventFilter | None = None,
         max_text_length: int = 240,
         max_tree_depth: int = 2,
@@ -61,10 +63,12 @@ class AtSpiAccessibilityBackend:
     ) -> None:
         self.event_types = tuple(event_types)
         self.on_focus = on_focus
+        self.on_key = on_key
         self.event_filter = event_filter or FocusEventFilter()
         self.max_text_length = max_text_length
         self.max_tree_depth = max_tree_depth
         self.max_children_per_node = max_children_per_node
+        self._pressed_modifiers: set[str] = set()
 
     def start(self) -> None:
         try:
@@ -76,6 +80,12 @@ class AtSpiAccessibilityBackend:
 
         for event_type in self.event_types:
             pyatspi.Registry.registerEventListener(self._handle_event, event_type)
+
+        if self.on_key is not None:
+            pyatspi.Registry.registerKeystrokeListener(
+                self._handle_key_event,
+                kind=(pyatspi.KEY_PRESSED_EVENT, pyatspi.KEY_RELEASED_EVENT),
+            )
 
         pyatspi.Registry.start()
 
@@ -89,6 +99,44 @@ class AtSpiAccessibilityBackend:
             return
 
         self.on_focus(node)
+
+    def _handle_key_event(self, event: Any) -> bool:
+        key = self._read_key_event_string(event)
+        if not key:
+            return False
+
+        if self._is_key_release_event(event):
+            self._pressed_modifiers.discard(normalize_key(key))
+            return False
+
+        handled = self._dispatch_key_event(key)
+        if self._tracks_as_modifier(key):
+            self._pressed_modifiers.add(normalize_key(key))
+
+        return handled
+
+    def _dispatch_key_event(self, key: str) -> bool:
+        if self.on_key is None:
+            return False
+
+        return self.on_key(key, tuple(sorted(self._pressed_modifiers)))
+
+    @staticmethod
+    def _read_key_event_string(event: Any) -> str:
+        for attribute in ("event_string", "eventString", "key_string", "keyString"):
+            key = getattr(event, attribute, "")
+            if isinstance(key, str) and key.strip():
+                return key.strip()
+
+        return ""
+
+    def _is_key_release_event(self, event: Any) -> bool:
+        event_type = getattr(event, "type", None)
+        return event_type is not None and str(event_type).endswith("RELEASED_EVENT")
+
+    def _tracks_as_modifier(self, key: str) -> bool:
+        normalized = normalize_key(key)
+        return normalized in {"control", "shift"} or is_screen_reader_modifier(normalized)
 
     def _read_node(self, source: Any, *, depth: int) -> AccessibleNode:
         child_count = self._read_child_count(source)

@@ -129,7 +129,7 @@ def command_for_key(key: str) -> Command | None:
 
 
 def command_for_gesture(keys: Iterable[str]) -> Command | None:
-    normalized_keys = frozenset(filter(None, (_normalize_key(key) for key in keys)))
+    normalized_keys = frozenset(filter(None, (normalize_key(key) for key in keys)))
     if not normalized_keys:
         return None
 
@@ -144,11 +144,11 @@ def command_for_gesture(keys: Iterable[str]) -> Command | None:
 
 
 def is_screen_reader_modifier(key: str) -> bool:
-    return _normalize_key(key) in SCREEN_READER_MODIFIER_KEYS
+    return normalize_key(key) in SCREEN_READER_MODIFIER_KEYS
 
 
 def _binding_matches(binding_key: str, keys: frozenset[str]) -> bool:
-    binding_parts = frozenset(_normalize_key(part) for part in binding_key.split("+"))
+    binding_parts = frozenset(normalize_key(part) for part in binding_key.split("+"))
     if "sr" not in binding_parts:
         return binding_parts == keys
 
@@ -157,6 +157,6 @@ def _binding_matches(binding_key: str, keys: frozenset[str]) -> bool:
     return bool(pressed_reader_modifiers) and keys - pressed_reader_modifiers == required_keys
 
 
-def _normalize_key(key: str) -> str:
+def normalize_key(key: str) -> str:
     normalized = key.strip().lower().replace("_", "").replace("-", "").replace(" ", "")
     return KEY_ALIASES.get(normalized, normalized)
