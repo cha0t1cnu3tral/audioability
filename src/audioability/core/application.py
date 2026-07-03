@@ -12,6 +12,7 @@ from audioability.input.commands import (
     CommandName,
     command_for_gesture,
     is_screen_reader_modifier,
+    normalize_key,
 )
 from audioability.input.router import CommandRouter
 from audioability.speech.controller import SpeechController
@@ -35,6 +36,11 @@ class ScreenReaderApplication:
         self.speech_controller = SpeechController(self.speech_driver)
         self.current_focus: AccessibleNode | None = None
         self.object_navigator = ObjectNavigator()
+        self.quit_requested = False
+        self._input_help_waiting = False
+        self._pass_next_key = False
+        self._speech_modes = ("talk", "on-demand", "off")
+        self._speech_mode_index = 0
         self.router = CommandRouter(
             {
                 "focus": self.speak_current_focus,
@@ -88,6 +94,16 @@ class ScreenReaderApplication:
         self.accessibility_backend.start()
 
     def handle_command(self, command: Command) -> bool:
+        if command.name is CommandName.QUIT:
+            return self.quit()
+        if command.name is CommandName.OPEN_MENU:
+            return self.speech_controller.speak("Menu unavailable", allow_duplicate=True)
+        if command.name is CommandName.INPUT_HELP:
+            self._input_help_waiting = True
+            return self.speech_controller.speak("Input help", allow_duplicate=True)
+        if command.name is CommandName.PASS_NEXT_KEY:
+            self._pass_next_key = True
+            return self.speech_controller.speak("Pass next key", allow_duplicate=True)
         if command.name is CommandName.READ_FOCUS:
             return self.speak_current_focus()
         if command.name is CommandName.READ_TITLE:
@@ -98,12 +114,27 @@ class ScreenReaderApplication:
             return self.speak_status_bar()
         if command.name is CommandName.REPEAT_LAST:
             return self.repeat_last_spoken()
+        if command.name is CommandName.PAUSE_SPEECH:
+            return self.speech_controller.speak("Pause speech unavailable", allow_duplicate=True)
+        if command.name is CommandName.CYCLE_SPEECH_MODE:
+            return self.cycle_speech_mode()
         if command.name is CommandName.STOP_SPEECH:
             return self.stop_speech()
 
         return False
 
     def handle_key(self, key: str, modifiers: tuple[str, ...] = ()) -> bool:
+        if self._pass_next_key:
+            self._pass_next_key = False
+            return False
+
+        if self._input_help_waiting:
+            self._input_help_waiting = False
+            return self.speak_input_help(key, modifiers)
+
+        if self._handle_modifier_shortcut(key, modifiers):
+            return True
+
         command = command_for_gesture((*modifiers, key))
         if command is None:
             return False
@@ -115,6 +146,28 @@ class ScreenReaderApplication:
 
     def stop_speech(self) -> bool:
         return self.speech_controller.stop()
+
+    def cycle_speech_mode(self) -> bool:
+        self._speech_mode_index = (self._speech_mode_index + 1) % len(self._speech_modes)
+        return self.speech_controller.speak(
+            f"Speech mode {self._speech_modes[self._speech_mode_index]}",
+            allow_duplicate=True,
+        )
+
+    def quit(self) -> bool:
+        self.quit_requested = True
+        self.accessibility_backend.stop()
+        return self.speech_controller.speak("Audioability exiting", allow_duplicate=True)
+
+    def speak_input_help(self, key: str, modifiers: tuple[str, ...] = ()) -> bool:
+        command = command_for_gesture((*modifiers, key))
+        if command is None:
+            return self.speech_controller.speak("Unassigned", allow_duplicate=True)
+
+        return self.speech_controller.speak(
+            f"{self._gesture_text(key, modifiers)} {command.description}",
+            allow_duplicate=True,
+        )
 
     def speak_current_focus(self) -> bool:
         if self.current_focus is None:
@@ -177,12 +230,34 @@ class ScreenReaderApplication:
 
         return self.navigate_object(action)
 
+    def _handle_modifier_shortcut(self, key: str, modifiers: tuple[str, ...]) -> bool:
+        modifier_key = self._screen_reader_modifier_from(modifiers)
+        if modifier_key is None:
+            return False
+
+        if self.speech_controller.handle_modifier_arrow(modifier_key, key):
+            return True
+
+        return self.handle_modifier_numpad(modifier_key, key)
+
     def _speak_focused_node(self, node: AccessibleNode) -> None:
         self.current_focus = node
         self.object_navigator.set_focus(node)
         text = self._focused_node_text(node)
         if text:
             self.speech_controller.speak(text)
+
+    @staticmethod
+    def _screen_reader_modifier_from(modifiers: tuple[str, ...]) -> str | None:
+        return next(
+            (modifier for modifier in modifiers if is_screen_reader_modifier(modifier)),
+            None,
+        )
+
+    @staticmethod
+    def _gesture_text(key: str, modifiers: tuple[str, ...]) -> str:
+        parts = (*modifiers, key)
+        return "+".join(normalize_key(part) for part in parts if part.strip())
 
     @staticmethod
     def _focused_node_text(node: AccessibleNode) -> str:

@@ -14,6 +14,17 @@ class StoppableSpeechDriver(NullSpeechDriver):
         self.stopped = True
 
 
+class StoppableBackend:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def start(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
 def test_dry_run_speaks_startup_message() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
@@ -182,6 +193,65 @@ def test_status_bar_gesture_reports_missing_status_bar() -> None:
     assert speech.messages == ["No status bar"]
 
 
+def test_documented_command_shortcuts_are_handled() -> None:
+    speech = NullSpeechDriver()
+    backend = StoppableBackend()
+    app = ScreenReaderApplication(
+        dry_run=True,
+        accessibility_backend=backend,
+        speech_driver=speech,
+    )
+
+    assert app.handle_key("s", ("Caps_Lock",)) is True
+    assert app.handle_key("n", ("Caps_Lock",)) is True
+    assert app.handle_key("1", ("Caps_Lock",)) is True
+    assert app.handle_key("F2", ("Caps_Lock",)) is True
+    assert app.handle_key("q", ("Caps_Lock",)) is True
+    assert app.handle_key("Shift_L") is True
+
+    assert backend.stopped is True
+    assert app.quit_requested is True
+    assert speech.messages == [
+        "Speech mode on-demand",
+        "Menu unavailable",
+        "Input help",
+        "capslock+f2 send the next key directly to the app",
+        "Audioability exiting",
+        "Pause speech unavailable",
+    ]
+
+
+def test_pass_next_key_lets_one_key_through() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
+
+    assert app.handle_key("F2", ("Caps_Lock",)) is True
+    assert app.handle_key("Tab", ("Caps_Lock",)) is False
+    assert app.handle_key("Tab", ("Caps_Lock",)) is True
+
+    assert speech.messages == [
+        "Search entry",
+        "Pass next key",
+        "Search entry",
+    ]
+
+
+def test_input_help_announces_next_shortcut_without_running_it() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
+
+    assert app.handle_key("1", ("Caps_Lock",)) is True
+    assert app.handle_key("Tab", ("Caps_Lock",)) is True
+
+    assert speech.messages == [
+        "Search entry",
+        "Input help",
+        "capslock+tab read the currently focused control",
+    ]
+
+
 def test_capslock_numpad_keys_navigate_objects_like_nvda_desktop_layout() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
@@ -203,6 +273,30 @@ def test_capslock_numpad_keys_navigate_objects_like_nvda_desktop_layout() -> Non
         "Window frame 2 items",
         "Window frame 2 items",
     ]
+
+
+def test_key_handler_routes_modifier_numpad_navigation() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    root = AccessibleNode(
+        name="Window",
+        role="frame",
+        children=(AccessibleNode(name="First", role="button"),),
+    )
+    app.object_navigator.set_root(root)
+
+    assert app.handle_key("Numpad2", ("Caps_Lock",)) is True
+
+    assert speech.messages == ["First button"]
+
+
+def test_key_handler_routes_modifier_arrow_speech_settings() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    assert app.handle_key("Right", ("Caps_Lock",)) is True
+
+    assert speech.messages == ["Volume 100 percent"]
 
 
 def test_insert_numpad_keys_navigate_objects_like_capslock() -> None:

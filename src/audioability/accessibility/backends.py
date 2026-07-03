@@ -14,6 +14,9 @@ class AccessibilityBackend(Protocol):
     def start(self) -> None:
         """Connect to desktop accessibility services and start listening."""
 
+    def stop(self) -> None:
+        """Disconnect from desktop accessibility services."""
+
 
 class AccessibilityBackendUnavailableError(RuntimeError):
     """Raised when a platform accessibility backend cannot be loaded."""
@@ -23,6 +26,9 @@ class NullAccessibilityBackend:
     """No-op backend for tests and non-Linux development environments."""
 
     def start(self) -> None:
+        return None
+
+    def stop(self) -> None:
         return None
 
 
@@ -88,6 +94,14 @@ class AtSpiAccessibilityBackend:
             )
 
         pyatspi.Registry.start()
+
+    def stop(self) -> None:
+        try:
+            import pyatspi  # type: ignore[import-not-found, import-untyped, unused-ignore]
+        except ImportError:
+            return
+
+        pyatspi.Registry.stop()
 
     def _handle_event(self, event: Any) -> None:
         if self.on_focus is None:
