@@ -9,7 +9,9 @@ authors = [
   { name = "Audioability contributors" }
 ]
 keywords = ["accessibility", "screen-reader", "linux", "at-spi", "speech"]
-dependencies = []
+dependencies = [
+    "pygobject>=3.50,<3.52 ; sys_platform == 'linux'",
+]
 
 [project.scripts]
 audioability = "audioability.cli:main"
