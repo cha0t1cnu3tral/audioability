@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, TypeVar, runtime_checkable
 
+from audioability.input.commands import is_screen_reader_modifier
 from audioability.speech.drivers import SpeechDriver
 
 T = TypeVar("T")
@@ -112,7 +113,7 @@ class SpeechController:
         return self.speak(self._last_spoken_text, allow_duplicate=True)
 
     def handle_modifier_arrow(self, modifier_key: str, arrow_key: str) -> bool:
-        if self._normalize_key(modifier_key) != "capslock":
+        if not is_screen_reader_modifier(modifier_key):
             return False
 
         key = self._normalize_key(arrow_key)

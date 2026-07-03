@@ -73,6 +73,16 @@ def test_capslock_up_and_down_change_selected_option() -> None:
     assert speech.messages[-1] == "Rate 100 percent"
 
 
+def test_insert_arrows_navigate_speech_options_like_capslock() -> None:
+    speech = StoppableSpeechDriver()
+    controller = SpeechController(speech)
+
+    assert controller.handle_modifier_arrow("insert", "right") is True
+
+    assert controller.selected_option.value == SpeechOption.VOLUME.value
+    assert speech.messages[-1] == "Volume 100 percent"
+
+
 def test_non_capslock_arrow_is_not_handled() -> None:
     speech = StoppableSpeechDriver()
     controller = SpeechController(speech)

@@ -51,4 +51,14 @@ class FocusEventFilter:
 
     @staticmethod
     def _has_speakable_text(node: AccessibleNode) -> bool:
-        return any((node.name, node.role, node.description))
+        return any(
+            (
+                node.name,
+                node.role,
+                node.description,
+                node.value,
+                node.text,
+                node.placeholder,
+                node.shortcut,
+            )
+        ) or any(FocusEventFilter._has_speakable_text(child) for child in node.children)

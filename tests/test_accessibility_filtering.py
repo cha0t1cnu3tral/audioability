@@ -20,6 +20,18 @@ def test_filter_rejects_node_without_speakable_text() -> None:
     assert event_filter.accepts(SimpleNamespace(detail1=1), node) is False
 
 
+def test_filter_accepts_container_with_speakable_child() -> None:
+    event_filter = FocusEventFilter()
+    node = AccessibleNode(
+        name="",
+        role="",
+        description="",
+        children=(AccessibleNode(name="Play", role="button"),),
+    )
+
+    assert event_filter.accepts(SimpleNamespace(detail1=1), node) is True
+
+
 def test_filter_rejects_immediate_duplicate_focus_event() -> None:
     now = 10.0
     event_filter = FocusEventFilter(clock=lambda: now)

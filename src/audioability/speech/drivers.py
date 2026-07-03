@@ -34,3 +34,7 @@ class SpeechDispatcherDriver:
             return
 
         print(f"[speech fallback] {text}")
+
+    def stop(self) -> None:
+        if shutil.which(self.executable):
+            subprocess.run([self.executable, "-C"], check=False)

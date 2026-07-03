@@ -1,7 +1,17 @@
 from audioability.accessibility.models import AccessibleNode
+from audioability.accessibility.navigation import ObjectNavigationAction
 from audioability.core.application import ScreenReaderApplication
 from audioability.input.commands import Command, CommandName
 from audioability.speech.drivers import NullSpeechDriver
+
+
+class StoppableSpeechDriver(NullSpeechDriver):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
 
 
 def test_dry_run_speaks_startup_message() -> None:
@@ -22,6 +32,44 @@ def test_focused_node_is_spoken() -> None:
     )
 
     assert speech.messages == ["Submit push button Submit the form"]
+
+
+def test_focused_node_speech_includes_state_value_children_and_shortcut() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    app._speak_focused_node(
+        AccessibleNode(
+            name="Volume",
+            role="slider",
+            description="Master output volume",
+            value="75",
+            text="Volume",
+            placeholder="Set volume",
+            shortcut="Alt+V",
+            state=frozenset({"focused", "focusable", "enabled"}),
+            child_count=2,
+        )
+    )
+
+    assert speech.messages == [
+        "Volume slider 75 Set volume Master output volume 2 items shortcut Alt+V"
+    ]
+
+
+def test_unnamed_container_speech_includes_readable_children() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    app._speak_focused_node(
+        AccessibleNode(
+            name="",
+            role="container",
+            children=(AccessibleNode(name="Play", role="button"),),
+        )
+    )
+
+    assert speech.messages == ["container Play button"]
 
 
 def test_repeating_last_spoken_text_repeats_last_focused_node() -> None:
@@ -81,3 +129,69 @@ def test_router_stop_returns_false_when_driver_cannot_stop() -> None:
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
 
     assert app.router.run("stop") is False
+
+
+def test_control_key_interrupts_speech() -> None:
+    speech = StoppableSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    assert app.handle_key("Control_L") is True
+
+    assert speech.stopped is True
+
+
+def test_capslock_numpad_keys_navigate_objects_like_nvda_desktop_layout() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    first = AccessibleNode(name="First", role="button")
+    second = AccessibleNode(name="Second", role="button")
+    root = AccessibleNode(name="Window", role="frame", children=(first, second))
+    app.object_navigator.set_root(root)
+
+    assert app.handle_modifier_numpad("capslock", "numpad2") is True
+    assert app.handle_modifier_numpad("capslock", "numpad6") is True
+    assert app.handle_modifier_numpad("capslock", "numpad4") is True
+    assert app.handle_modifier_numpad("capslock", "numpad8") is True
+    assert app.handle_modifier_numpad("capslock", "numpad5") is True
+
+    assert speech.messages == [
+        "First button",
+        "Second button",
+        "First button",
+        "Window frame 2 items",
+        "Window frame 2 items",
+    ]
+
+
+def test_insert_numpad_keys_navigate_objects_like_capslock() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    root = AccessibleNode(
+        name="Window",
+        role="frame",
+        children=(AccessibleNode(name="First", role="button"),),
+    )
+    app.object_navigator.set_root(root)
+
+    assert app.handle_modifier_numpad("insert", "numpad2") is True
+
+    assert speech.messages == ["First button"]
+
+
+def test_router_object_next_runs_object_navigation_action() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    root = AccessibleNode(
+        name="Window",
+        role="frame",
+        children=(
+            AccessibleNode(name="First", role="button"),
+            AccessibleNode(name="Second", role="button"),
+        ),
+    )
+    app.object_navigator.set_root(root)
+
+    assert app.navigate_object(ObjectNavigationAction.MOVE_TO_FIRST_CHILD) is True
+    assert app.router.run("object-next") is True
+
+    assert speech.messages == ["First button", "Second button"]
