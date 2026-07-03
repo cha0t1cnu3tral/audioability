@@ -49,11 +49,8 @@ jobs:
             sudo apt-get install -y "${packages[@]}"
           fi
 
-      - name: Install test dependencies
-        run: uv sync --dev
-
       - name: Run tests
-        run: uv run pytest
+        run: PYTHONPATH=src uv run --no-project --with pytest pytest
 
       - name: Build Linux runner
         run: scripts/build-linux-runner.sh dist/audioability-linux.run
