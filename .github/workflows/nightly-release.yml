@@ -1,0 +1,64 @@
+name: Nightly Release
+
+on:
+  schedule:
+    - cron: "24 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-release
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    name: Build nightly .run release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: uv sync --dev
+
+      - name: Run tests
+        run: uv run pytest
+
+      - name: Build Linux runner
+        run: scripts/build-linux-runner.sh dist/audioability-linux.run
+
+      - name: Prepare release notes
+        run: |
+          {
+            echo "Nightly build from ${GITHUB_SHA}."
+            echo
+            echo "Download \`audioability-linux.run\`, then run:"
+            echo
+            echo "\`\`\`bash"
+            echo "chmod +x audioability-linux.run"
+            echo "./audioability-linux.run"
+            echo "\`\`\`"
+          } > dist/nightly-release-notes.md
+
+      - name: Publish nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete nightly --yes --cleanup-tag || true
+          gh release create nightly \
+            dist/audioability-linux.run \
+            --title "Audioability Nightly" \
+            --notes-file dist/nightly-release-notes.md \
+            --target "$GITHUB_SHA" \
+            --prerelease
