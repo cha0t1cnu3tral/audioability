@@ -29,8 +29,27 @@ a venv, and starts the screen reader. Yes, it does chores. Somebody had to.
 
 ## Run From Source
 
-First install the Linux system packages. `uv` is good, but it cannot summon AT-SPI from the
-void because those bindings are shipped by distros, not PyPI.
+Use the source installer:
+
+```bash
+scripts/install-linux.sh
+scripts/run-linux.sh
+```
+
+That script installs the Linux system packages `uv sync` cannot fetch, creates
+`.venv-linux` with access to distro AT-SPI bindings, then runs `uv sync` into that venv.
+This is the boring correct way. The exciting incorrect way is wondering why `pyatspi`
+does not exist inside a normal isolated venv.
+
+For a no-desktop sanity check:
+
+```bash
+scripts/run-linux.sh --dry-run
+```
+
+If the script cannot detect your package manager, install the packages manually. `uv` is
+good, but it cannot summon AT-SPI from the void because those bindings are shipped by
+distros, not PyPI.
 
 Debian or Ubuntu:
 
@@ -80,17 +99,12 @@ sudo pacman -Sy --needed \
   speech-dispatcher
 ```
 
-Then sync and run:
+Then sync into a venv that can see system site packages:
 
 ```bash
-uv sync
-uv run audioability
-```
-
-For a no-desktop sanity check:
-
-```bash
-uv run audioability --dry-run
+python3 -m venv --system-site-packages .venv-linux
+UV_PROJECT_ENVIRONMENT=.venv-linux uv sync
+scripts/run-linux.sh
 ```
 
 ## Commands
