@@ -104,6 +104,45 @@ def test_atspi_backend_reads_children_from_indexable_container() -> None:
     ]
 
 
+def test_atspi_backend_dispatches_focus_tree_with_focused_node() -> None:
+    focus_events: list[tuple[AccessibleNode, AccessibleNode]] = []
+
+    def on_focus_tree(root: AccessibleNode, focused: AccessibleNode) -> None:
+        focus_events.append((root, focused))
+
+    focused_source = FakeTreeAccessible(name="Search", role="entry")
+    sibling_source = FakeTreeAccessible(name="Cancel", role="button")
+    panel_source = FakeTreeAccessible(
+        focused_source,
+        sibling_source,
+        name="Controls",
+        role="panel",
+    )
+    FakeTreeAccessible(panel_source, name="Settings", role="frame")
+    backend = AtSpiAccessibilityBackend(on_focus_tree=on_focus_tree)
+
+    backend._handle_event(SimpleNamespace(source=focused_source, detail1=1))
+
+    root, focused = focus_events[0]
+    assert root == AccessibleNode(
+        name="Settings",
+        role="frame",
+        child_count=1,
+        children=(
+            AccessibleNode(
+                name="Controls",
+                role="panel",
+                child_count=2,
+                children=(
+                    AccessibleNode(name="Search", role="entry"),
+                    AccessibleNode(name="Cancel", role="button"),
+                ),
+            ),
+        ),
+    )
+    assert focused == root.children[0].children[0]
+
+
 def test_atspi_backend_dispatches_key_events_with_pressed_modifiers() -> None:
     key_events: list[tuple[str, tuple[str, ...]]] = []
 
@@ -194,6 +233,34 @@ class FakeIndexableAccessible(SimpleNamespace):
 
     def __getitem__(self, index: int) -> object:
         return self._children[index]
+
+
+class FakeTreeAccessible(SimpleNamespace):
+    def __init__(self, *children: FakeTreeAccessible, name: str, role: str) -> None:
+        super().__init__(
+            name=name,
+            description="",
+            childCount=len(children),
+            parent=None,
+        )
+        self._role = role
+        self._children = children
+        self._parent: FakeTreeAccessible | None = None
+        for child in children:
+            child._parent = self
+            child.parent = self
+
+    def getRoleName(self) -> str:
+        return self._role
+
+    def getChildAtIndex(self, index: int) -> FakeTreeAccessible:
+        return self._children[index]
+
+    def getIndexInParent(self) -> int:
+        if self._parent is None:
+            return -1
+
+        return self._parent._children.index(self)
 
 
 def test_atspi_backend_filters_event_without_speakable_text() -> None:

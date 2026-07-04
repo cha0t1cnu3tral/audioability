@@ -61,19 +61,23 @@ class AtSpiAccessibilityBackend:
         *,
         event_types: Sequence[str] = ("object:state-changed:focused",),
         on_focus: Callable[[AccessibleNode], None] | None = None,
+        on_focus_tree: Callable[[AccessibleNode, AccessibleNode], None] | None = None,
         on_key: Callable[[str, tuple[str, ...]], bool] | None = None,
         event_filter: FocusEventFilter | None = None,
         max_text_length: int = 240,
-        max_tree_depth: int = 2,
-        max_children_per_node: int = 50,
+        max_tree_depth: int = 6,
+        max_children_per_node: int = 200,
+        max_ancestor_depth: int = 24,
     ) -> None:
         self.event_types = tuple(event_types)
         self.on_focus = on_focus
+        self.on_focus_tree = on_focus_tree
         self.on_key = on_key
         self.event_filter = event_filter or FocusEventFilter()
         self.max_text_length = max_text_length
         self.max_tree_depth = max_tree_depth
         self.max_children_per_node = max_children_per_node
+        self.max_ancestor_depth = max_ancestor_depth
         self._pressed_modifiers: set[str] = set()
 
     def start(self) -> None:
@@ -104,7 +108,7 @@ class AtSpiAccessibilityBackend:
         pyatspi.Registry.stop()
 
     def _handle_event(self, event: Any) -> None:
-        if self.on_focus is None:
+        if self.on_focus is None and self.on_focus_tree is None:
             return
 
         source = getattr(event, "source", None)
@@ -112,7 +116,13 @@ class AtSpiAccessibilityBackend:
         if not self.event_filter.accepts(event, node):
             return
 
-        self.on_focus(node)
+        if self.on_focus_tree is not None:
+            root, focused = self._read_focus_tree(source, fallback_focus=node)
+            self.on_focus_tree(root, focused)
+            return
+
+        if self.on_focus is not None:
+            self.on_focus(node)
 
     def _handle_key_event(self, event: Any) -> bool:
         key = self._read_key_event_string(event)
@@ -178,6 +188,81 @@ class AtSpiAccessibilityBackend:
             child_count=child_count,
             children=self._read_children(source, child_count, depth=depth),
         )
+
+    def _read_focus_tree(
+        self,
+        source: Any,
+        *,
+        fallback_focus: AccessibleNode,
+    ) -> tuple[AccessibleNode, AccessibleNode]:
+        root_source, focus_path = self._read_root_source_and_focus_path(source)
+        root_depth = max(self.max_tree_depth, len(focus_path) + self.max_tree_depth)
+        root = self._read_node(root_source, depth=root_depth)
+        focused = self._node_at_path(root, focus_path)
+        return root, focused or fallback_focus
+
+    def _read_root_source_and_focus_path(self, source: Any) -> tuple[Any, tuple[int, ...]]:
+        root = source
+        reversed_path: list[int] = []
+        seen: set[int] = set()
+
+        for _ in range(self.max_ancestor_depth):
+            source_id = id(root)
+            if source_id in seen:
+                break
+            seen.add(source_id)
+
+            parent = self._read_parent(root)
+            if parent is None:
+                break
+
+            index = self._read_index_in_parent(root, parent)
+            if index is None:
+                break
+
+            reversed_path.append(index)
+            root = parent
+
+        return root, tuple(reversed(reversed_path))
+
+    @staticmethod
+    def _read_parent(source: Any) -> Any | None:
+        parent = getattr(source, "parent", None)
+        if parent is not None:
+            return parent
+
+        get_parent = getattr(source, "getParent", None)
+        if callable(get_parent):
+            try:
+                return get_parent()
+            except Exception:
+                return None
+
+        return None
+
+    def _read_index_in_parent(self, source: Any, parent: Any) -> int | None:
+        get_index = getattr(source, "getIndexInParent", None)
+        if callable(get_index):
+            index = self._safe_call(get_index)
+            if isinstance(index, int) and index >= 0:
+                return index
+
+        child_count = self._read_child_count(parent)
+        for index in range(min(child_count, self.max_children_per_node)):
+            if self._read_child(parent, index) is source:
+                return index
+
+        return None
+
+    @staticmethod
+    def _node_at_path(node: AccessibleNode, path: tuple[int, ...]) -> AccessibleNode | None:
+        current = node
+        for index in path:
+            if index < 0 or index >= len(current.children):
+                return None
+            current = current.children[index]
+
+        return current
 
     @staticmethod
     def _read_text_attribute(source: Any, attribute: str) -> str:

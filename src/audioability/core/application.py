@@ -80,7 +80,7 @@ class ScreenReaderApplication:
             NullAccessibilityBackend()
             if dry_run
             else AtSpiAccessibilityBackend(
-                on_focus=self._speak_focused_node,
+                on_focus_tree=self._speak_focused_tree,
                 on_key=self.handle_key,
             )
         )
@@ -244,6 +244,14 @@ class ScreenReaderApplication:
         self.current_focus = node
         self.object_navigator.set_focus(node)
         text = self._focused_node_text(node)
+        if text:
+            self.speech_controller.speak(text)
+
+    def _speak_focused_tree(self, root: AccessibleNode, focused: AccessibleNode) -> None:
+        self.current_focus = focused
+        self.object_navigator.set_root(root)
+        self.object_navigator.set_focus(focused)
+        text = self._focused_node_text(focused)
         if text:
             self.speech_controller.speak(text)
 

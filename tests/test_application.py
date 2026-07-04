@@ -45,6 +45,26 @@ def test_focused_node_is_spoken() -> None:
     assert speech.messages == ["Submit push button Submit the form"]
 
 
+def test_focused_tree_enables_navigation_outside_focused_node() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    focused = AccessibleNode(name="Search", role="entry")
+    sibling = AccessibleNode(name="Cancel", role="button")
+    panel = AccessibleNode(name="Controls", role="panel", children=(focused, sibling))
+    root = AccessibleNode(name="Settings", role="frame", children=(panel,))
+
+    app._speak_focused_tree(root, focused)
+
+    assert app.navigate_object(ObjectNavigationAction.MOVE_TO_NEXT) is True
+    assert app.navigate_object(ObjectNavigationAction.MOVE_TO_PARENT) is True
+
+    assert speech.messages == [
+        "Search entry",
+        "Cancel button",
+        "Controls panel 2 items",
+    ]
+
+
 def test_focused_node_speech_includes_state_value_children_and_shortcut() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
