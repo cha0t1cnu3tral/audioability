@@ -33,6 +33,7 @@ def test_default_command_bindings_include_requested_commands() -> None:
     assert bindings[CommandName.READ_WINDOW].desktop_key == "sr+b"
     assert bindings[CommandName.READ_STATUS_BAR].desktop_key == "sr+end"
     assert bindings[CommandName.READ_STATUS_BAR].laptop_key == "sr+shift+end"
+    assert bindings[CommandName.TOGGLE_BROWSE_FOCUS_MODE].desktop_key == "sr+space"
 
 
 def test_control_key_maps_to_stop_speech_command() -> None:
@@ -69,6 +70,14 @@ def test_screen_reader_gestures_map_to_commands() -> None:
     laptop_status_bar = command_for_gesture(("Insert", "Shift_L", "End"))
     assert laptop_status_bar is not None
     assert laptop_status_bar.name is CommandName.READ_STATUS_BAR
+
+    toggle_mode = command_for_gesture(("Caps_Lock", "Space"))
+    assert toggle_mode is not None
+    assert toggle_mode.name is CommandName.TOGGLE_BROWSE_FOCUS_MODE
+
+    toggle_mode_spacebar = command_for_gesture(("Insert", "spacebar"))
+    assert toggle_mode_spacebar is not None
+    assert toggle_mode_spacebar.name is CommandName.TOGGLE_BROWSE_FOCUS_MODE
 
 
 def test_unbound_gesture_returns_none() -> None:

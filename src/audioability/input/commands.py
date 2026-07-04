@@ -20,6 +20,8 @@ KEY_ALIASES = {
     "rightshift": "shift",
     "insert": "insert",
     "ins": "insert",
+    "spacebar": "space",
+    "spacekey": "space",
     "kp2": "numpad2",
     "kpdown": "numpad2",
     "kp3": "numpad3",
@@ -53,6 +55,7 @@ class CommandName(StrEnum):
     READ_TITLE = "read-title"
     READ_WINDOW = "read-window"
     READ_STATUS_BAR = "read-status-bar"
+    TOGGLE_BROWSE_FOCUS_MODE = "toggle-browse-focus-mode"
     REPEAT_LAST = "repeat-last"
     PAUSE_SPEECH = "pause-speech"
     CYCLE_SPEECH_MODE = "cycle-speech-mode"
@@ -139,6 +142,12 @@ DEFAULT_COMMAND_BINDINGS = (
         desktop_key="sr+end",
         laptop_key="sr+shift+end",
         meaning="read the status bar if available",
+    ),
+    CommandBinding(
+        name=CommandName.TOGGLE_BROWSE_FOCUS_MODE,
+        desktop_key="sr+space",
+        laptop_key="sr+space",
+        meaning="toggle between browse mode and focus mode",
     ),
 )
 
