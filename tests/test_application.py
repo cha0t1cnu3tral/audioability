@@ -1,6 +1,6 @@
 from audioability.accessibility.models import AccessibleNode
 from audioability.accessibility.navigation import ObjectNavigationAction
-from audioability.core.application import ScreenReaderApplication
+from audioability.core.application import InteractionMode, ScreenReaderApplication
 from audioability.input.commands import Command, CommandName
 from audioability.speech.drivers import NullSpeechDriver
 
@@ -23,6 +23,10 @@ class StoppableBackend:
 
     def stop(self) -> None:
         self.stopped = True
+
+
+def assert_interaction_mode(app: ScreenReaderApplication, mode: InteractionMode) -> None:
+    assert app.interaction_mode is mode
 
 
 def test_dry_run_speaks_startup_message() -> None:
@@ -200,6 +204,61 @@ def test_read_title_window_and_status_bar_commands() -> None:
         "Downloads",
         "Downloads frame 2 items",
         "Ready status bar",
+    ]
+
+
+def test_sr_space_toggles_browse_and_focus_modes() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    assert app.handle_key("Space", ("Caps_Lock",)) is True
+    assert_interaction_mode(app, InteractionMode.FOCUS)
+    assert app.handle_key("Space", ("Caps_Lock",)) is True
+    assert_interaction_mode(app, InteractionMode.BROWSE)
+
+    assert speech.messages == ["Focus mode", "Browse mode"]
+
+
+def test_editable_focus_auto_enters_focus_mode_and_escape_returns_to_browse() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    app._speak_focused_node(
+        AccessibleNode(name="Search", role="entry", state=frozenset({"editable"}))
+    )
+
+    assert_interaction_mode(app, InteractionMode.FOCUS)
+    assert app.handle_key("Escape") is True
+    assert_interaction_mode(app, InteractionMode.BROWSE)
+
+    assert speech.messages == ["Search entry editable", "Browse mode"]
+
+
+def test_manual_focus_mode_passes_plain_keys_to_application() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    assert app.handle_key("Space", ("Caps_Lock",)) is True
+    assert app.handle_key("Down") is False
+
+    assert speech.messages == ["Focus mode"]
+
+
+def test_browse_mode_arrow_keys_navigate_accessibility_tree() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    first = AccessibleNode(name="First", role="button")
+    second = AccessibleNode(name="Second", role="button")
+    root = AccessibleNode(name="Window", role="frame", children=(first, second))
+    app._speak_focused_tree(root, first)
+
+    assert app.handle_key("Down") is True
+    assert app.handle_key("Up") is True
+
+    assert speech.messages == [
+        "First button",
+        "Second button",
+        "First button",
     ]
 
 

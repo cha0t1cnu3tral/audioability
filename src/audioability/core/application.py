@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from enum import StrEnum
+
 from audioability.accessibility.backends import (
     AccessibilityBackend,
     AtSpiAccessibilityBackend,
@@ -17,6 +19,11 @@ from audioability.input.commands import (
 from audioability.input.router import CommandRouter
 from audioability.speech.controller import SpeechController
 from audioability.speech.drivers import NullSpeechDriver, SpeechDispatcherDriver, SpeechDriver
+
+
+class InteractionMode(StrEnum):
+    BROWSE = "browse"
+    FOCUS = "focus"
 
 
 class ScreenReaderApplication:
@@ -39,6 +46,8 @@ class ScreenReaderApplication:
         self.quit_requested = False
         self._input_help_waiting = False
         self._pass_next_key = False
+        self.interaction_mode = InteractionMode.BROWSE
+        self._focus_mode_auto_entered = False
         self._speech_modes = ("talk", "on-demand", "off")
         self._speech_mode_index = 0
         self.router = CommandRouter(
@@ -112,6 +121,8 @@ class ScreenReaderApplication:
             return self.speak_current_window()
         if command.name is CommandName.READ_STATUS_BAR:
             return self.speak_status_bar()
+        if command.name is CommandName.TOGGLE_BROWSE_FOCUS_MODE:
+            return self.toggle_browse_focus_mode()
         if command.name is CommandName.REPEAT_LAST:
             return self.repeat_last_spoken()
         if command.name is CommandName.PAUSE_SPEECH:
@@ -137,7 +148,7 @@ class ScreenReaderApplication:
 
         command = command_for_gesture((*modifiers, key))
         if command is None:
-            return False
+            return self._handle_interaction_mode_key(key, modifiers)
 
         return self.handle_command(command)
 
@@ -153,6 +164,16 @@ class ScreenReaderApplication:
             f"Speech mode {self._speech_modes[self._speech_mode_index]}",
             allow_duplicate=True,
         )
+
+    def toggle_browse_focus_mode(self) -> bool:
+        if self.interaction_mode is InteractionMode.BROWSE:
+            self.interaction_mode = InteractionMode.FOCUS
+            self._focus_mode_auto_entered = False
+            return self.speech_controller.speak("Focus mode", allow_duplicate=True)
+
+        self.interaction_mode = InteractionMode.BROWSE
+        self._focus_mode_auto_entered = False
+        return self.speech_controller.speak("Browse mode", allow_duplicate=True)
 
     def quit(self) -> bool:
         self.quit_requested = True
@@ -243,6 +264,7 @@ class ScreenReaderApplication:
     def _speak_focused_node(self, node: AccessibleNode) -> None:
         self.current_focus = node
         self.object_navigator.set_focus(node)
+        self._sync_interaction_mode_for_focus(node)
         text = self._focused_node_text(node)
         if text:
             self.speech_controller.speak(text)
@@ -251,9 +273,87 @@ class ScreenReaderApplication:
         self.current_focus = focused
         self.object_navigator.set_root(root)
         self.object_navigator.set_focus(focused)
+        self._sync_interaction_mode_for_focus(focused)
         text = self._focused_node_text(focused)
         if text:
             self.speech_controller.speak(text)
+
+    def _sync_interaction_mode_for_focus(self, node: AccessibleNode) -> None:
+        if self._focus_mode_auto_entered and not self._requires_focus_mode(node):
+            self.interaction_mode = InteractionMode.BROWSE
+            self._focus_mode_auto_entered = False
+            return
+
+        if self.interaction_mode is InteractionMode.BROWSE and self._requires_focus_mode(node):
+            self.interaction_mode = InteractionMode.FOCUS
+            self._focus_mode_auto_entered = True
+
+    def _handle_interaction_mode_key(self, key: str, modifiers: tuple[str, ...]) -> bool:
+        if modifiers:
+            return False
+
+        normalized_key = normalize_key(key)
+        if (
+            self.interaction_mode is InteractionMode.FOCUS
+            and self._focus_mode_auto_entered
+            and normalized_key == "esc"
+        ):
+            self.interaction_mode = InteractionMode.BROWSE
+            self._focus_mode_auto_entered = False
+            return self.speech_controller.speak("Browse mode", allow_duplicate=True)
+
+        if self.interaction_mode is InteractionMode.FOCUS:
+            return False
+
+        if (
+            normalized_key in {"enter", "space"}
+            and self.current_focus is not None
+            and self._requires_focus_mode(self.current_focus)
+        ):
+            self.interaction_mode = InteractionMode.FOCUS
+            self._focus_mode_auto_entered = True
+            return self.speech_controller.speak("Focus mode", allow_duplicate=True)
+
+        browse_action = self._browse_key_action(normalized_key)
+        if browse_action is None:
+            return True
+
+        return self.navigate_object(browse_action)
+
+    @staticmethod
+    def _requires_focus_mode(node: AccessibleNode) -> bool:
+        role = node.role.casefold().replace("-", " ")
+        states = {state.casefold().replace("-", " ") for state in node.state}
+        return bool(
+            {"editable", "expanded"}.intersection(states)
+            or role
+            in {
+                "combo box",
+                "combobox",
+                "entry",
+                "editable text",
+                "list",
+                "list box",
+                "listbox",
+                "menu",
+                "menu item",
+                "spin button",
+                "spinbutton",
+                "text",
+                "text area",
+                "tree",
+                "tree table",
+            }
+        )
+
+    @staticmethod
+    def _browse_key_action(key: str) -> ObjectNavigationAction | None:
+        return {
+            "down": ObjectNavigationAction.MOVE_TO_NEXT_FLAT,
+            "right": ObjectNavigationAction.MOVE_TO_NEXT_FLAT,
+            "up": ObjectNavigationAction.MOVE_TO_PREVIOUS_FLAT,
+            "left": ObjectNavigationAction.MOVE_TO_PREVIOUS_FLAT,
+        }.get(key.removeprefix("arrow"))
 
     @staticmethod
     def _screen_reader_modifier_from(modifiers: tuple[str, ...]) -> str | None:
