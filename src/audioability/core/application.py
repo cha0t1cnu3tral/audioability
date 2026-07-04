@@ -368,8 +368,4 @@ class ScreenReaderApplication:
             "numpad3": ObjectNavigationAction.MOVE_TO_NEXT_FLAT,
             "numpadminus": ObjectNavigationAction.MOVE_TO_FOCUS,
             "numpadenter": ObjectNavigationAction.ACTIVATE_CURRENT,
-        }.get(cls._normalize_key(numpad_key))
-
-    @staticmethod
-    def _normalize_key(key: str) -> str:
-        return key.lower().replace("_", "").replace("-", "")
+        }.get(normalize_key(numpad_key))

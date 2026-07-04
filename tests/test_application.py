@@ -290,6 +290,24 @@ def test_key_handler_routes_modifier_numpad_navigation() -> None:
     assert speech.messages == ["First button"]
 
 
+def test_key_handler_routes_linux_keypad_names() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    first = AccessibleNode(name="First", role="button")
+    root = AccessibleNode(name="Window", role="frame", children=(first,))
+    app.object_navigator.set_root(root)
+
+    assert app.handle_key("KP_Down", ("Caps_Lock",)) is True
+    assert app.handle_key("KP_Subtract", ("Caps_Lock",)) is True
+    assert app.handle_key("KP_Enter", ("Caps_Lock",)) is True
+
+    assert speech.messages == [
+        "First button",
+        "Window frame 1 item",
+        "Window frame 1 item",
+    ]
+
+
 def test_key_handler_routes_modifier_arrow_speech_settings() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)

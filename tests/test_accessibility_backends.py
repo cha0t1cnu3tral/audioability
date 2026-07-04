@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
+
+from pytest import MonkeyPatch
 
 from audioability.accessibility.backends import AtSpiAccessibilityBackend
 from audioability.accessibility.models import AccessibleNode
@@ -126,6 +129,26 @@ def test_atspi_backend_dispatches_key_events_with_pressed_modifiers() -> None:
     assert key_events == [
         ("Caps_Lock", ()),
         ("Tab", ("capslock",)),
+        ("Tab", ()),
+    ]
+
+
+def test_atspi_backend_recognizes_numeric_key_release_constants(monkeypatch: MonkeyPatch) -> None:
+    key_events: list[tuple[str, tuple[str, ...]]] = []
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        key_events.append((key, modifiers))
+        return True
+
+    monkeypatch.setitem(sys.modules, "pyatspi", SimpleNamespace(KEY_RELEASED_EVENT=1))
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
+
+    assert backend._handle_key_event(SimpleNamespace(event_string="Caps_Lock", type=0)) is True
+    assert backend._handle_key_event(SimpleNamespace(event_string="Caps_Lock", type=1)) is False
+    assert backend._handle_key_event(SimpleNamespace(event_string="Tab", type=0)) is True
+
+    assert key_events == [
+        ("Caps_Lock", ()),
         ("Tab", ()),
     ]
 

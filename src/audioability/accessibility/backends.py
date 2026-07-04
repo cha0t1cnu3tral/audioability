@@ -146,7 +146,19 @@ class AtSpiAccessibilityBackend:
 
     def _is_key_release_event(self, event: Any) -> bool:
         event_type = getattr(event, "type", None)
-        return event_type is not None and str(event_type).endswith("RELEASED_EVENT")
+        try:
+            import pyatspi  # type: ignore[import-not-found, import-untyped, unused-ignore]
+        except ImportError:
+            pyatspi = None
+
+        if pyatspi is not None and event_type == pyatspi.KEY_RELEASED_EVENT:
+            return True
+
+        if not isinstance(event_type, str):
+            return False
+
+        normalized = normalize_key(event_type)
+        return normalized in {"keyreleasedevent", "releasedevent", "released", "release"}
 
     def _tracks_as_modifier(self, key: str) -> bool:
         normalized = normalize_key(key)
