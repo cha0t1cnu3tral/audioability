@@ -114,32 +114,33 @@ Current key bindings:
 ```text
 Control          stop current speech
 Shift            pause/resume speech when supported
-CapsLock+Tab     read focused control
-CapsLock+T       read window title
-CapsLock+B       read current window
-CapsLock+End     read status bar
-CapsLock+S       cycle speech mode
-CapsLock+N       open menu/settings
-CapsLock+1       input help
-CapsLock+F2      pass next key through
-CapsLock+Q       quit
+sr+Tab           read focused control
+sr+T             read window title
+sr+B             read current window
+sr+End           read status bar
+sr+Space         toggle browse/focus mode
+sr+S             cycle speech mode
+sr+N             open menu/settings
+sr+1             input help
+sr+F2            pass next key through
+sr+Q             quit
 ```
 
-`Insert` also works as the screen-reader modifier for those commands. Laptop status bar is
-`Insert+Shift+End`, because keyboards apparently needed plot twists.
+`sr` means the screen reader key: `CapsLock` or `Insert`. Laptop status bar is
+`sr+Shift+End`, because keyboards apparently needed plot twists.
 
 Object navigation:
 
 ```text
-CapsLock+Numpad8      parent object
-CapsLock+Numpad4      previous object
-CapsLock+Numpad5      current object
-CapsLock+Numpad6      next object
-CapsLock+Numpad2      first child
-CapsLock+Numpad9      previous flat object
-CapsLock+Numpad3      next flat object
-CapsLock+NumpadMinus  move to focus
-CapsLock+NumpadEnter  activate current object
+sr+Numpad8      parent object
+sr+Numpad4      previous object
+sr+Numpad5      current object
+sr+Numpad6      next object
+sr+Numpad2      first child
+sr+Numpad9      previous flat object
+sr+Numpad3      next flat object
+sr+NumpadMinus  move to focus
+sr+NumpadEnter  activate current object
 ```
 
 ## Wayland And X11
