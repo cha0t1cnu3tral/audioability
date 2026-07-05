@@ -129,6 +129,14 @@ sr+Q             quit
 `sr` means the screen reader key: `CapsLock` or `Insert`. Laptop status bar is
 `sr+Shift+End`, because keyboards apparently needed plot twists.
 
+Speech modes cycle with `sr+S`:
+
+```text
+talk       speak focus changes and explicit commands
+on-demand  suppress focus changes, but speak explicit commands
+off        suppress normal speech until the mode is changed again
+```
+
 Object navigation:
 
 ```text
