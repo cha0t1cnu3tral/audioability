@@ -112,22 +112,28 @@ class SpeechController:
 
         return self.speak(self._last_spoken_text, allow_duplicate=True)
 
-    def handle_modifier_arrow(self, modifier_key: str, arrow_key: str) -> bool:
+    def handle_modifier_arrow(
+        self,
+        modifier_key: str,
+        arrow_key: str,
+        *,
+        announce: bool = True,
+    ) -> bool:
         if not is_screen_reader_modifier(modifier_key):
             return False
 
         key = self._normalize_key(arrow_key)
         if key == "left":
-            self._select_previous_option()
+            self._select_previous_option(announce=announce)
             return True
         if key == "right":
-            self._select_next_option()
+            self._select_next_option(announce=announce)
             return True
         if key == "up":
-            self._change_selected_option(1)
+            self._change_selected_option(1, announce=announce)
             return True
         if key == "down":
-            self._change_selected_option(-1)
+            self._change_selected_option(-1, announce=announce)
             return True
 
         return False
@@ -138,15 +144,17 @@ class SpeechController:
 
         return now - self._last_spoken_at < self._duplicate_window_seconds
 
-    def _select_previous_option(self) -> None:
+    def _select_previous_option(self, *, announce: bool) -> None:
         self._selected_option_index = (self._selected_option_index - 1) % len(self._options)
-        self._announce_selected_option()
+        if announce:
+            self._announce_selected_option()
 
-    def _select_next_option(self) -> None:
+    def _select_next_option(self, *, announce: bool) -> None:
         self._selected_option_index = (self._selected_option_index + 1) % len(self._options)
-        self._announce_selected_option()
+        if announce:
+            self._announce_selected_option()
 
-    def _change_selected_option(self, direction: int) -> None:
+    def _change_selected_option(self, direction: int, *, announce: bool) -> None:
         option = self.selected_option
         if option is SpeechOption.RATE:
             self.settings = replace(
@@ -178,7 +186,8 @@ class SpeechController:
                 verbosity=self._cycle(self._verbosity_modes, self.settings.verbosity, direction),
             )
 
-        self._announce_selected_option()
+        if announce:
+            self._announce_selected_option()
 
     def _announce_selected_option(self) -> None:
         self.speak(self._selected_option_message(), allow_duplicate=True)

@@ -310,6 +310,22 @@ def test_off_speech_mode_suppresses_normal_speech_until_mode_changes() -> None:
     ]
 
 
+def test_off_speech_mode_keeps_speech_setting_shortcuts_silent() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    assert app.cycle_speech_mode() is True
+    assert app.cycle_speech_mode() is True
+
+    assert app.handle_key("Up", ("Caps_Lock",)) is True
+
+    assert app.speech_controller.settings.rate == 1.1
+    assert speech.messages == [
+        "Speech mode on-demand",
+        "Speech mode off",
+    ]
+
+
 def test_documented_command_shortcuts_are_handled() -> None:
     speech = NullSpeechDriver()
     backend = StoppableBackend()

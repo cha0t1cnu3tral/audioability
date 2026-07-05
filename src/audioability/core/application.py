@@ -253,7 +253,11 @@ class ScreenReaderApplication:
         if modifier_key is None:
             return False
 
-        if self.speech_controller.handle_modifier_arrow(modifier_key, key):
+        if self.speech_controller.handle_modifier_arrow(
+            modifier_key,
+            key,
+            announce=self.speech_mode is not SpeechMode.OFF,
+        ):
             return True
 
         return self.handle_modifier_numpad(modifier_key, key)
