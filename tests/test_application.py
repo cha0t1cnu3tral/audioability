@@ -383,7 +383,7 @@ def test_key_handler_routes_linux_keypad_names() -> None:
     assert speech.messages == [
         "First button",
         "Window frame 1 item",
-        "Window frame 1 item",
+        "No action",
     ]
 
 

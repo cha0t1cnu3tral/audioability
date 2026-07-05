@@ -76,6 +76,31 @@ def test_atspi_backend_reads_richer_accessible_properties_and_children() -> None
     ]
 
 
+def test_atspi_backend_exposes_default_action_activation() -> None:
+    activated_indexes: list[int] = []
+    nodes: list[AccessibleNode] = []
+    backend = AtSpiAccessibilityBackend(on_focus=nodes.append)
+
+    def do_action(index: int) -> bool:
+        activated_indexes.append(index)
+        return True
+
+    source = SimpleNamespace(
+        name="Submit",
+        description="",
+        getRoleName=lambda: "button",
+        queryAction=lambda: SimpleNamespace(
+            nActions=1,
+            doAction=do_action,
+        ),
+    )
+
+    backend._handle_event(SimpleNamespace(source=source))
+
+    assert nodes[0].activate() is True
+    assert activated_indexes == [0]
+
+
 def test_atspi_backend_reads_children_from_indexable_container() -> None:
     nodes: list[AccessibleNode] = []
     backend = AtSpiAccessibilityBackend(on_focus=nodes.append)

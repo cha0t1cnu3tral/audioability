@@ -130,6 +130,8 @@ class ObjectNavigator:
     def _activate_current(self) -> ObjectNavigationResult:
         if self.current is None:
             return ObjectNavigationResult(False, message="No navigator object")
+        if not self.current.activate():
+            return ObjectNavigationResult(False, message="No action")
 
         return ObjectNavigationResult(True, self.current, "Activate current object")
 

@@ -42,3 +42,30 @@ def test_object_navigator_reports_focus_and_current_object() -> None:
     assert navigator.run(ObjectNavigationAction.REPORT_CURRENT).node == second
     assert navigator.run(ObjectNavigationAction.MOVE_TO_PREVIOUS).node == first
     assert navigator.run(ObjectNavigationAction.MOVE_TO_FOCUS).node == second
+
+
+def test_object_navigator_activates_current_object() -> None:
+    activated = False
+
+    def activate() -> bool:
+        nonlocal activated
+        activated = True
+        return True
+
+    button = AccessibleNode(name="Submit", role="button", activation=activate)
+    navigator = ObjectNavigator(button)
+
+    result = navigator.run(ObjectNavigationAction.ACTIVATE_CURRENT)
+
+    assert result.handled is True
+    assert result.node == button
+    assert activated is True
+
+
+def test_object_navigator_reports_missing_action() -> None:
+    navigator = ObjectNavigator(AccessibleNode(name="Label", role="label"))
+
+    result = navigator.run(ObjectNavigationAction.ACTIVATE_CURRENT)
+
+    assert result.handled is False
+    assert result.message == "No action"

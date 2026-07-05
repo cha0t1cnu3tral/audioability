@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -15,3 +16,10 @@ class AccessibleNode:
     state: frozenset[str] = frozenset()
     child_count: int = 0
     children: tuple[AccessibleNode, ...] = ()
+    activation: Callable[[], bool] | None = field(default=None, repr=False, compare=False)
+
+    def activate(self) -> bool:
+        if self.activation is None:
+            return False
+
+        return self.activation()

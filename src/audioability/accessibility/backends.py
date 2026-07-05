@@ -187,6 +187,7 @@ class AtSpiAccessibilityBackend:
             state=self._read_state(source),
             child_count=child_count,
             children=self._read_children(source, child_count, depth=depth),
+            activation=self._read_activation(source),
         )
 
     def _read_focus_tree(
@@ -342,6 +343,21 @@ class AtSpiAccessibilityBackend:
                 return shortcut.strip()
 
         return ""
+
+    def _read_activation(self, source: Any) -> Callable[[], bool] | None:
+        action_interface = self._query_interface(source, "queryAction")
+        if action_interface is None:
+            return None
+
+        action_count = getattr(action_interface, "nActions", 0)
+        do_action = getattr(action_interface, "doAction", None)
+        if not isinstance(action_count, int) or action_count <= 0 or not callable(do_action):
+            return None
+
+        def activate() -> bool:
+            return self._safe_call(do_action, 0) is True
+
+        return activate
 
     def _read_state(self, source: Any) -> frozenset[str]:
         state_set = self._safe_call(getattr(source, "getState", None))
