@@ -26,6 +26,12 @@ class InteractionMode(StrEnum):
     FOCUS = "focus"
 
 
+class SpeechMode(StrEnum):
+    TALK = "talk"
+    ON_DEMAND = "on-demand"
+    OFF = "off"
+
+
 class ScreenReaderApplication:
     """Coordinates accessibility events, command input, and speech output."""
 
@@ -48,7 +54,7 @@ class ScreenReaderApplication:
         self._pass_next_key = False
         self.interaction_mode = InteractionMode.BROWSE
         self._focus_mode_auto_entered = False
-        self._speech_modes = ("talk", "on-demand", "off")
+        self._speech_modes = tuple(SpeechMode)
         self._speech_mode_index = 0
         self.router = CommandRouter(
             {
@@ -96,23 +102,23 @@ class ScreenReaderApplication:
 
     def run(self) -> None:
         if self.dry_run:
-            self.speech_controller.speak("Audioability initialized in dry-run mode.")
+            self._speak_status("Audioability initialized in dry-run mode.")
             return
 
-        self.speech_controller.speak("Audioability started.")
+        self._speak_status("Audioability started.")
         self.accessibility_backend.start()
 
     def handle_command(self, command: Command) -> bool:
         if command.name is CommandName.QUIT:
             return self.quit()
         if command.name is CommandName.OPEN_MENU:
-            return self.speech_controller.speak("Menu unavailable", allow_duplicate=True)
+            return self._speak_command("Menu unavailable")
         if command.name is CommandName.INPUT_HELP:
             self._input_help_waiting = True
-            return self.speech_controller.speak("Input help", allow_duplicate=True)
+            return self._speak_command("Input help")
         if command.name is CommandName.PASS_NEXT_KEY:
             self._pass_next_key = True
-            return self.speech_controller.speak("Pass next key", allow_duplicate=True)
+            return self._speak_command("Pass next key")
         if command.name is CommandName.READ_FOCUS:
             return self.speak_current_focus()
         if command.name is CommandName.READ_TITLE:
@@ -126,7 +132,7 @@ class ScreenReaderApplication:
         if command.name is CommandName.REPEAT_LAST:
             return self.repeat_last_spoken()
         if command.name is CommandName.PAUSE_SPEECH:
-            return self.speech_controller.speak("Pause speech unavailable", allow_duplicate=True)
+            return self._speak_command("Pause speech unavailable")
         if command.name is CommandName.CYCLE_SPEECH_MODE:
             return self.cycle_speech_mode()
         if command.name is CommandName.STOP_SPEECH:
@@ -153,6 +159,9 @@ class ScreenReaderApplication:
         return self.handle_command(command)
 
     def repeat_last_spoken(self) -> bool:
+        if self.speech_mode is SpeechMode.OFF:
+            return False
+
         return self.speech_controller.repeat_last()
 
     def stop_speech(self) -> bool:
@@ -160,35 +169,29 @@ class ScreenReaderApplication:
 
     def cycle_speech_mode(self) -> bool:
         self._speech_mode_index = (self._speech_mode_index + 1) % len(self._speech_modes)
-        return self.speech_controller.speak(
-            f"Speech mode {self._speech_modes[self._speech_mode_index]}",
-            allow_duplicate=True,
-        )
+        return self._speak_status(f"Speech mode {self.speech_mode.value}")
 
     def toggle_browse_focus_mode(self) -> bool:
         if self.interaction_mode is InteractionMode.BROWSE:
             self.interaction_mode = InteractionMode.FOCUS
             self._focus_mode_auto_entered = False
-            return self.speech_controller.speak("Focus mode", allow_duplicate=True)
+            return self._speak_command("Focus mode")
 
         self.interaction_mode = InteractionMode.BROWSE
         self._focus_mode_auto_entered = False
-        return self.speech_controller.speak("Browse mode", allow_duplicate=True)
+        return self._speak_command("Browse mode")
 
     def quit(self) -> bool:
         self.quit_requested = True
         self.accessibility_backend.stop()
-        return self.speech_controller.speak("Audioability exiting", allow_duplicate=True)
+        return self._speak_status("Audioability exiting")
 
     def speak_input_help(self, key: str, modifiers: tuple[str, ...] = ()) -> bool:
         command = command_for_gesture((*modifiers, key))
         if command is None:
-            return self.speech_controller.speak("Unassigned", allow_duplicate=True)
+            return self._speak_command("Unassigned")
 
-        return self.speech_controller.speak(
-            f"{self._gesture_text(key, modifiers)} {command.description}",
-            allow_duplicate=True,
-        )
+        return self._speak_command(f"{self._gesture_text(key, modifiers)} {command.description}")
 
     def speak_current_focus(self) -> bool:
         if self.current_focus is None:
@@ -198,46 +201,40 @@ class ScreenReaderApplication:
         if not text:
             return False
 
-        return self.speech_controller.speak(text, allow_duplicate=True)
+        return self._speak_command(text)
 
     def speak_current_title(self) -> bool:
         root = self.object_navigator.root
         if root is None or not root.name.strip():
-            return self.speech_controller.speak("No title", allow_duplicate=True)
+            return self._speak_command("No title")
 
-        return self.speech_controller.speak(root.name, allow_duplicate=True)
+        return self._speak_command(root.name)
 
     def speak_current_window(self) -> bool:
         node = self.object_navigator.root or self.current_focus
         if node is None:
-            return self.speech_controller.speak("No window", allow_duplicate=True)
+            return self._speak_command("No window")
 
         text = self._focused_node_text(node)
         if not text:
-            return self.speech_controller.speak("No window", allow_duplicate=True)
+            return self._speak_command("No window")
 
-        return self.speech_controller.speak(text, allow_duplicate=True)
+        return self._speak_command(text)
 
     def speak_status_bar(self) -> bool:
         root = self.object_navigator.root or self.current_focus
         status_bar = self._find_first_role(root, {"status bar", "statusbar"}) if root else None
         if status_bar is None:
-            return self.speech_controller.speak("No status bar", allow_duplicate=True)
+            return self._speak_command("No status bar")
 
-        return self.speech_controller.speak(
-            self._focused_node_text(status_bar),
-            allow_duplicate=True,
-        )
+        return self._speak_command(self._focused_node_text(status_bar))
 
     def navigate_object(self, action: ObjectNavigationAction) -> bool:
         result = self.object_navigator.run(action)
         if result.node is not None:
-            return self.speech_controller.speak(
-                self._focused_node_text(result.node),
-                allow_duplicate=True,
-            )
+            return self._speak_command(self._focused_node_text(result.node))
         if result.message:
-            return self.speech_controller.speak(result.message, allow_duplicate=True)
+            return self._speak_command(result.message)
 
         return result.handled
 
@@ -267,7 +264,7 @@ class ScreenReaderApplication:
         self._sync_interaction_mode_for_focus(node)
         text = self._focused_node_text(node)
         if text:
-            self.speech_controller.speak(text)
+            self._speak_auto(text)
 
     def _speak_focused_tree(self, root: AccessibleNode, focused: AccessibleNode) -> None:
         self.current_focus = focused
@@ -276,7 +273,7 @@ class ScreenReaderApplication:
         self._sync_interaction_mode_for_focus(focused)
         text = self._focused_node_text(focused)
         if text:
-            self.speech_controller.speak(text)
+            self._speak_auto(text)
 
     def _sync_interaction_mode_for_focus(self, node: AccessibleNode) -> None:
         if self._focus_mode_auto_entered and not self._requires_focus_mode(node):
@@ -300,7 +297,7 @@ class ScreenReaderApplication:
         ):
             self.interaction_mode = InteractionMode.BROWSE
             self._focus_mode_auto_entered = False
-            return self.speech_controller.speak("Browse mode", allow_duplicate=True)
+            return self._speak_command("Browse mode")
 
         if self.interaction_mode is InteractionMode.FOCUS:
             return False
@@ -312,7 +309,7 @@ class ScreenReaderApplication:
         ):
             self.interaction_mode = InteractionMode.FOCUS
             self._focus_mode_auto_entered = True
-            return self.speech_controller.speak("Focus mode", allow_duplicate=True)
+            return self._speak_command("Focus mode")
 
         browse_action = self._browse_key_action(normalized_key)
         if browse_action is None:
@@ -477,3 +474,22 @@ class ScreenReaderApplication:
             "numpadminus": ObjectNavigationAction.MOVE_TO_FOCUS,
             "numpadenter": ObjectNavigationAction.ACTIVATE_CURRENT,
         }.get(normalize_key(numpad_key))
+
+    @property
+    def speech_mode(self) -> SpeechMode:
+        return self._speech_modes[self._speech_mode_index]
+
+    def _speak_auto(self, text: str) -> bool:
+        if self.speech_mode is not SpeechMode.TALK:
+            return False
+
+        return self.speech_controller.speak(text)
+
+    def _speak_command(self, text: str) -> bool:
+        if self.speech_mode is SpeechMode.OFF:
+            return False
+
+        return self.speech_controller.speak(text, allow_duplicate=True)
+
+    def _speak_status(self, text: str) -> bool:
+        return self.speech_controller.speak(text, allow_duplicate=True)

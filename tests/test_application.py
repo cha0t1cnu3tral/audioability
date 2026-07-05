@@ -1,6 +1,6 @@
 from audioability.accessibility.models import AccessibleNode
 from audioability.accessibility.navigation import ObjectNavigationAction
-from audioability.core.application import InteractionMode, ScreenReaderApplication
+from audioability.core.application import InteractionMode, ScreenReaderApplication, SpeechMode
 from audioability.input.commands import Command, CommandName
 from audioability.speech.drivers import NullSpeechDriver
 
@@ -270,6 +270,41 @@ def test_status_bar_gesture_reports_missing_status_bar() -> None:
     assert app.handle_key("End", ("Caps_Lock",)) is True
 
     assert speech.messages == ["No status bar"]
+
+
+def test_on_demand_speech_mode_suppresses_focus_events_but_keeps_commands() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    assert app.cycle_speech_mode() is True
+    assert app.speech_mode is SpeechMode.ON_DEMAND
+
+    app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
+
+    assert app.handle_key("Tab", ("Caps_Lock",)) is True
+    assert speech.messages == [
+        "Speech mode on-demand",
+        "Search entry",
+    ]
+
+
+def test_off_speech_mode_suppresses_normal_speech_until_mode_changes() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    assert app.cycle_speech_mode() is True
+    assert app.cycle_speech_mode() is True
+    assert app.speech_mode is SpeechMode.OFF
+
+    app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
+    assert app.handle_key("Tab", ("Caps_Lock",)) is False
+    assert app.cycle_speech_mode() is True
+
+    assert speech.messages == [
+        "Speech mode on-demand",
+        "Speech mode off",
+        "Speech mode talk",
+    ]
 
 
 def test_documented_command_shortcuts_are_handled() -> None:
