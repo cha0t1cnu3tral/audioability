@@ -24,6 +24,10 @@ def test_default_command_bindings_include_requested_commands() -> None:
     assert bindings[CommandName.STOP_SPEECH].desktop_key == "control"
     assert bindings[CommandName.PAUSE_SPEECH].desktop_key == "shift"
     assert bindings[CommandName.CYCLE_SPEECH_MODE].desktop_key == "sr+s"
+    assert (
+        bindings[CommandName.CYCLE_SPEECH_MODE].meaning
+        == "cycle speech mode between talk, on-demand, and off"
+    )
     assert bindings[CommandName.OPEN_MENU].desktop_key == "sr+n"
     assert bindings[CommandName.INPUT_HELP].desktop_key == "sr+1"
     assert bindings[CommandName.PASS_NEXT_KEY].desktop_key == "sr+f2"

@@ -93,7 +93,7 @@ DEFAULT_COMMAND_BINDINGS = (
         name=CommandName.CYCLE_SPEECH_MODE,
         desktop_key="sr+s",
         laptop_key="sr+s",
-        meaning="cycle speech mode, such as talk, beeps, off, or on-demand",
+        meaning="cycle speech mode between talk, on-demand, and off",
     ),
     CommandBinding(
         name=CommandName.OPEN_MENU,

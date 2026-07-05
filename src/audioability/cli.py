@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from audioability.accessibility.backends import AccessibilityBackendUnavailableError
 from audioability.core.application import ScreenReaderApplication
 
 
@@ -19,6 +20,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     app = ScreenReaderApplication(dry_run=args.dry_run)
-    app.run()
+    try:
+        app.run()
+    except AccessibilityBackendUnavailableError as exc:
+        parser.exit(1, f"audioability: {exc}\n")
