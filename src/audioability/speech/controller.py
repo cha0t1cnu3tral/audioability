@@ -94,6 +94,8 @@ class SpeechController:
         if not allow_duplicate and self._is_duplicate_spam(cleaned_text, now):
             return False
 
+        if isinstance(self._driver, StoppableSpeechDriver):
+            self._driver.stop()
         self._driver.speak(cleaned_text)
         self._last_spoken_text = cleaned_text
         self._last_spoken_at = now
