@@ -160,7 +160,7 @@ class ScreenReaderApplication:
 
     def repeat_last_spoken(self) -> bool:
         if self.speech_mode is SpeechMode.OFF:
-            return False
+            return self.speech_controller.last_spoken_text is not None
 
         return self.speech_controller.repeat_last()
 
@@ -486,10 +486,13 @@ class ScreenReaderApplication:
         return self.speech_controller.speak(text)
 
     def _speak_command(self, text: str) -> bool:
-        if self.speech_mode is SpeechMode.OFF:
+        cleaned_text = text.strip()
+        if not cleaned_text:
             return False
+        if self.speech_mode is SpeechMode.OFF:
+            return True
 
-        return self.speech_controller.speak(text, allow_duplicate=True)
+        return self.speech_controller.speak(cleaned_text, allow_duplicate=True)
 
     def _speak_status(self, text: str) -> bool:
         return self.speech_controller.speak(text, allow_duplicate=True)

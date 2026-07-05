@@ -292,15 +292,18 @@ def test_off_speech_mode_suppresses_normal_speech_until_mode_changes() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
 
+    app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
     assert app.cycle_speech_mode() is True
     assert app.cycle_speech_mode() is True
     assert app.speech_mode is SpeechMode.OFF
 
-    app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
-    assert app.handle_key("Tab", ("Caps_Lock",)) is False
+    app._speak_focused_node(AccessibleNode(name="Results", role="list"))
+    assert app.handle_key("Tab", ("Caps_Lock",)) is True
+    assert app.repeat_last_spoken() is True
     assert app.cycle_speech_mode() is True
 
     assert speech.messages == [
+        "Search entry",
         "Speech mode on-demand",
         "Speech mode off",
         "Speech mode talk",
