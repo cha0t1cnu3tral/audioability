@@ -35,6 +35,11 @@ class NullAccessibilityBackend:
 class AtSpiAccessibilityBackend:
     """AT-SPI backend for Linux desktop accessibility events."""
 
+    # PyAtspi defaults to mask 0, which only reports keys pressed without a
+    # modifier. Register every combination from AT-SPI's eight-bit legacy
+    # modifier mask so screen-reader gestures reach the application.
+    _modifier_masks = tuple(range(256))
+
     _state_names = (
         "active",
         "checked",
@@ -94,6 +99,7 @@ class AtSpiAccessibilityBackend:
         if self.on_key is not None:
             pyatspi.Registry.registerKeystrokeListener(
                 self._handle_key_event,
+                mask=self._modifier_masks,
                 kind=(pyatspi.KEY_PRESSED_EVENT, pyatspi.KEY_RELEASED_EVENT),
             )
 

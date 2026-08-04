@@ -9,6 +9,45 @@ from audioability.accessibility.backends import AtSpiAccessibilityBackend
 from audioability.accessibility.models import AccessibleNode
 
 
+def test_atspi_backend_registers_keys_for_every_modifier_mask(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    keystroke_registrations: list[dict[str, object]] = []
+
+    class FakeRegistry:
+        @staticmethod
+        def registerEventListener(callback: object, event_type: str) -> None:
+            return None
+
+        @staticmethod
+        def registerKeystrokeListener(callback: object, **options: object) -> None:
+            keystroke_registrations.append(options)
+
+        @staticmethod
+        def start() -> None:
+            return None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pyatspi",
+        SimpleNamespace(
+            Registry=FakeRegistry,
+            KEY_PRESSED_EVENT=1,
+            KEY_RELEASED_EVENT=2,
+        ),
+    )
+    backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
+
+    backend.start()
+
+    assert keystroke_registrations == [
+        {
+            "mask": tuple(range(256)),
+            "kind": (1, 2),
+        }
+    ]
+
+
 def test_atspi_backend_converts_focus_event_to_accessible_node() -> None:
     nodes: list[AccessibleNode] = []
     backend = AtSpiAccessibilityBackend(on_focus=nodes.append)
