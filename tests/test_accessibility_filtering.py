@@ -39,6 +39,9 @@ def test_filter_rejects_immediate_duplicate_focus_event() -> None:
     node = AccessibleNode(name="Submit", role="push button")
 
     assert event_filter.accepts(event, node) is True
+    now = 10.3
+
+    assert event_filter.accepts(event, node) is True
     assert event_filter.accepts(event, node) is False
 
 
@@ -53,6 +56,13 @@ def test_filter_allows_duplicate_after_window() -> None:
     node = AccessibleNode(name="Submit", role="push button")
 
     assert event_filter.accepts(event, node) is True
-    now = 10.3
 
-    assert event_filter.accepts(event, node) is True
+
+def test_filter_ignores_different_activation_callbacks_when_deduplicating() -> None:
+    event_filter = FocusEventFilter()
+    event = SimpleNamespace(detail1=1)
+    first = AccessibleNode(name="Submit", role="button", activation=lambda: True)
+    second = AccessibleNode(name="Submit", role="button", activation=lambda: True)
+
+    assert event_filter.accepts(event, first) is True
+    assert event_filter.accepts(event, second) is False

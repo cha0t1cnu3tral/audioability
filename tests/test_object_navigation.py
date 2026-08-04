@@ -69,3 +69,29 @@ def test_object_navigator_reports_missing_action() -> None:
 
     assert result.handled is False
     assert result.message == "No action"
+
+
+def test_object_navigator_distinguishes_identical_siblings() -> None:
+    first = AccessibleNode(name="Item", role="button")
+    second = AccessibleNode(name="Item", role="button")
+    third = AccessibleNode(name="Item", role="button")
+    root = AccessibleNode(name="Window", role="frame", children=(first, second, third))
+    navigator = ObjectNavigator(root)
+    navigator.set_focus(second)
+
+    assert navigator.run(ObjectNavigationAction.MOVE_TO_PREVIOUS).node is first
+    assert navigator.run(ObjectNavigationAction.MOVE_TO_NEXT_FLAT).node is second
+    assert navigator.run(ObjectNavigationAction.MOVE_TO_NEXT_FLAT).node is third
+
+
+def test_object_navigator_handles_focus_outside_cached_tree() -> None:
+    root = AccessibleNode(name="Old window", role="frame")
+    new_focus = AccessibleNode(name="New control", role="button")
+    navigator = ObjectNavigator(root)
+    navigator.set_focus(new_focus)
+
+    result = navigator.run(ObjectNavigationAction.MOVE_TO_NEXT_FLAT)
+
+    assert result.handled is False
+    assert result.node is new_focus
+    assert result.message == "No object"

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import astuple
 from typing import Any
 
 from audioability.accessibility.models import AccessibleNode
@@ -19,7 +18,7 @@ class FocusEventFilter:
     ) -> None:
         self._duplicate_window_seconds = duplicate_window_seconds
         self._clock = clock
-        self._last_node_signature: tuple[object, ...] | None = None
+        self._last_node: AccessibleNode | None = None
         self._last_accepted_at: float | None = None
 
     def accepts(self, event: Any, node: AccessibleNode) -> bool:
@@ -32,14 +31,14 @@ class FocusEventFilter:
         if self._is_duplicate(node, now):
             return False
 
-        self._last_node_signature = astuple(node)
+        self._last_node = node
         self._last_accepted_at = now
         return True
 
     def _is_duplicate(self, node: AccessibleNode, now: float) -> bool:
         if self._last_accepted_at is None:
             return False
-        if astuple(node) != self._last_node_signature:
+        if node != self._last_node:
             return False
 
         return now - self._last_accepted_at < self._duplicate_window_seconds

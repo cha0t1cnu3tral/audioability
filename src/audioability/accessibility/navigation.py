@@ -99,7 +99,11 @@ class ObjectNavigator:
             return ObjectNavigationResult(False, self.current, "No sibling object")
 
         siblings = path[-2].children
-        index = siblings.index(path[-1]) + direction
+        current_index = self._identity_index(siblings, path[-1])
+        if current_index is None:
+            return ObjectNavigationResult(False, self.current, "No sibling object")
+
+        index = current_index + direction
         if index < 0 or index >= len(siblings):
             return ObjectNavigationResult(False, self.current, "No sibling object")
 
@@ -120,7 +124,11 @@ class ObjectNavigator:
             return ObjectNavigationResult(False, message="No navigator object")
 
         flattened = self._flatten(self.root)
-        index = flattened.index(self.current) + direction
+        current_index = self._identity_index(flattened, self.current)
+        if current_index is None:
+            return ObjectNavigationResult(False, self.current, "No object")
+
+        index = current_index + direction
         if index < 0 or index >= len(flattened):
             return ObjectNavigationResult(False, self.current, "No object")
 
@@ -148,7 +156,7 @@ class ObjectNavigator:
         path: tuple[AccessibleNode, ...] = (),
     ) -> tuple[AccessibleNode, ...] | None:
         next_path = (*path, node)
-        if node == target:
+        if node is target:
             return next_path
 
         for child in node.children:
@@ -161,3 +169,9 @@ class ObjectNavigator:
     def _flatten(self, node: AccessibleNode) -> tuple[AccessibleNode, ...]:
         descendants = tuple(child for item in node.children for child in self._flatten(item))
         return (node, *descendants)
+
+    @staticmethod
+    def _identity_index(
+        nodes: tuple[AccessibleNode, ...], target: AccessibleNode
+    ) -> int | None:
+        return next((index for index, node in enumerate(nodes) if node is target), None)

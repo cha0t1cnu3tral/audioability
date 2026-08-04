@@ -10,9 +10,28 @@ developed without making the whole codebase hard to test.
 - Input layer: maps keyboard gestures to screen-reader commands.
 - Core application: coordinates events, commands, focus changes, and speech.
 
-## First Milestones
+## Runtime Flow
 
-1. Implement the AT-SPI backend in `audioability.accessibility.backends`.
-2. Implement Speech Dispatcher output in `audioability.speech.drivers`.
-3. Add a command router for keyboard gestures.
-4. Add focused-object speech formatting and regression tests.
+1. The AT-SPI backend subscribes to focus events and keyboard events for every modifier
+   mask, then normalizes live accessible objects into immutable `AccessibleNode` trees.
+2. The input layer normalizes Linux key names, tracks held modifiers, and resolves a
+   gesture to a command without consuming unassigned application keys.
+3. The core application applies browse/focus behavior, object navigation, and speech
+   modes before asking the speech controller to announce output.
+4. The speech controller suppresses duplicate chatter, interrupts stale output, and
+   applies rate, volume, voice, punctuation, and verbosity settings.
+5. The Speech Dispatcher driver sends configured output through `spd-say` and falls back
+   to visible console messages when speech output cannot be started.
+
+## Reliability Boundaries
+
+- Accessibility trees have bounded depth and child counts so a noisy desktop cannot
+  create unbounded reads.
+- Object navigation uses node identity, allowing repeated controls with identical names
+  and roles to remain distinct.
+- Focus and speech duplicate windows independently suppress rapid event storms.
+- The real backend is Linux-only; null backends and drivers keep dry runs and tests
+  portable.
+
+Every push and pull request runs pytest, Ruff, and strict mypy checks. The nightly release
+workflow separately exercises the Linux runner build with native accessibility packages.
