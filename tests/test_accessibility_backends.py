@@ -236,6 +236,22 @@ def test_atspi_backend_dispatches_key_events_with_pressed_modifiers() -> None:
     ]
 
 
+def test_atspi_backend_tracks_keypad_insert_and_standard_modifiers() -> None:
+    key_events: list[tuple[str, tuple[str, ...]]] = []
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        key_events.append((key, modifiers))
+        return True
+
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
+
+    backend._handle_key_event(SimpleNamespace(event_string="KP_Insert", type="PRESS"))
+    backend._handle_key_event(SimpleNamespace(event_string="Alt_L", type="PRESS"))
+    backend._handle_key_event(SimpleNamespace(event_string="Tab", type="PRESS"))
+
+    assert key_events[-1] == ("Tab", ("alt", "insert"))
+
+
 def test_atspi_backend_recognizes_numeric_key_release_constants(monkeypatch: MonkeyPatch) -> None:
     key_events: list[tuple[str, tuple[str, ...]]] = []
 

@@ -12,6 +12,7 @@ from audioability.accessibility.navigation import ObjectNavigationAction, Object
 from audioability.input.commands import (
     Command,
     CommandName,
+    command_binding_lines,
     command_for_gesture,
     is_screen_reader_modifier,
     normalize_key,
@@ -112,7 +113,7 @@ class ScreenReaderApplication:
         if command.name is CommandName.QUIT:
             return self.quit()
         if command.name is CommandName.OPEN_MENU:
-            return self._speak_command("Menu unavailable")
+            return self._speak_command("Commands. " + ". ".join(command_binding_lines()))
         if command.name is CommandName.INPUT_HELP:
             self._input_help_waiting = True
             return self._speak_command("Input help")
@@ -317,7 +318,7 @@ class ScreenReaderApplication:
 
         browse_action = self._browse_key_action(normalized_key)
         if browse_action is None:
-            return True
+            return False
 
         return self.navigate_object(browse_action)
 

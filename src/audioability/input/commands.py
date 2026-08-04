@@ -5,7 +5,24 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 SCREEN_READER_MODIFIER_KEYS = ("capslock", "insert")
+MODIFIER_KEYS = frozenset(
+    {
+        *SCREEN_READER_MODIFIER_KEYS,
+        "alt",
+        "altgr",
+        "control",
+        "meta",
+        "shift",
+        "super",
+    }
+)
 KEY_ALIASES = {
+    "alt": "alt",
+    "altl": "alt",
+    "altr": "alt",
+    "leftalt": "alt",
+    "rightalt": "alt",
+    "isolevel3shift": "altgr",
     "capslock": "capslock",
     "control": "control",
     "controll": "control",
@@ -20,6 +37,22 @@ KEY_ALIASES = {
     "rightshift": "shift",
     "insert": "insert",
     "ins": "insert",
+    "kp0": "insert",
+    "kpinsert": "insert",
+    "numpad0": "insert",
+    "numpadinsert": "insert",
+    "meta": "meta",
+    "metal": "meta",
+    "metar": "meta",
+    "leftmeta": "meta",
+    "rightmeta": "meta",
+    "super": "super",
+    "superl": "super",
+    "superr": "super",
+    "leftsuper": "super",
+    "rightsuper": "super",
+    "win": "super",
+    "windows": "super",
     "spacebar": "space",
     "spacekey": "space",
     "kp2": "numpad2",
@@ -99,7 +132,7 @@ DEFAULT_COMMAND_BINDINGS = (
         name=CommandName.OPEN_MENU,
         desktop_key="sr+n",
         laptop_key="sr+n",
-        meaning="open screenreader menu or settings",
+        meaning="list Audioability commands",
     ),
     CommandBinding(
         name=CommandName.INPUT_HELP,
@@ -149,6 +182,12 @@ DEFAULT_COMMAND_BINDINGS = (
         laptop_key="sr+space",
         meaning="toggle between browse mode and focus mode",
     ),
+    CommandBinding(
+        name=CommandName.REPEAT_LAST,
+        desktop_key="sr+r",
+        laptop_key="sr+r",
+        meaning="repeat the last spoken message",
+    ),
 )
 
 
@@ -173,6 +212,37 @@ def command_for_gesture(keys: Iterable[str]) -> Command | None:
 
 def is_screen_reader_modifier(key: str) -> bool:
     return normalize_key(key) in SCREEN_READER_MODIFIER_KEYS
+
+
+def is_modifier_key(key: str) -> bool:
+    return normalize_key(key) in MODIFIER_KEYS
+
+
+def command_binding_lines() -> tuple[str, ...]:
+    lines: list[str] = []
+    for binding in DEFAULT_COMMAND_BINDINGS:
+        if binding.desktop_key == binding.laptop_key:
+            gesture = binding.desktop_key
+        else:
+            gesture = f"{binding.desktop_key} desktop, {binding.laptop_key} laptop"
+        lines.append(f"{gesture}: {binding.meaning}")
+
+    return tuple(lines)
+
+
+def format_command_bindings() -> str:
+    rows = [
+        ("Desktop", "Laptop", "Action"),
+        *(
+            (binding.desktop_key, binding.laptop_key, binding.meaning)
+            for binding in DEFAULT_COMMAND_BINDINGS
+        ),
+    ]
+    widths = tuple(max(len(row[index]) for row in rows) for index in range(3))
+    return "\n".join(
+        f"{desktop:<{widths[0]}}  {laptop:<{widths[1]}}  {meaning}"
+        for desktop, laptop, meaning in rows
+    )
 
 
 def _binding_matches(binding_key: str, keys: frozenset[str]) -> bool:

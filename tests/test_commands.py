@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from audioability.input.commands import (
     DEFAULT_COMMAND_BINDINGS,
+    MODIFIER_KEYS,
     SCREEN_READER_MODIFIER_KEYS,
     CommandName,
     command_for_gesture,
     command_for_key,
+    format_command_bindings,
+    is_modifier_key,
     is_screen_reader_modifier,
 )
 
@@ -15,7 +18,17 @@ def test_screen_reader_modifier_is_capslock_or_insert() -> None:
     assert is_screen_reader_modifier("capslock") is True
     assert is_screen_reader_modifier("Caps_Lock") is True
     assert is_screen_reader_modifier("insert") is True
+    assert is_screen_reader_modifier("KP_Insert") is True
+    assert is_screen_reader_modifier("KP_0") is True
     assert is_screen_reader_modifier("shift") is False
+
+
+def test_modifier_key_aliases_are_normalized() -> None:
+    assert {"alt", "altgr", "control", "meta", "shift", "super"} < MODIFIER_KEYS
+    assert is_modifier_key("Alt_L") is True
+    assert is_modifier_key("ISO_Level3_Shift") is True
+    assert is_modifier_key("Super_R") is True
+    assert is_modifier_key("Tab") is False
 
 
 def test_default_command_bindings_include_requested_commands() -> None:
@@ -38,6 +51,7 @@ def test_default_command_bindings_include_requested_commands() -> None:
     assert bindings[CommandName.READ_STATUS_BAR].desktop_key == "sr+end"
     assert bindings[CommandName.READ_STATUS_BAR].laptop_key == "sr+shift+end"
     assert bindings[CommandName.TOGGLE_BROWSE_FOCUS_MODE].desktop_key == "sr+space"
+    assert bindings[CommandName.REPEAT_LAST].desktop_key == "sr+r"
 
 
 def test_control_key_maps_to_stop_speech_command() -> None:
@@ -67,6 +81,10 @@ def test_screen_reader_gestures_map_to_commands() -> None:
     assert read_window is not None
     assert read_window.name is CommandName.READ_WINDOW
 
+    keypad_read_window = command_for_gesture(("KP_Insert", "b"))
+    assert keypad_read_window is not None
+    assert keypad_read_window.name is CommandName.READ_WINDOW
+
     status_bar = command_for_gesture(("Caps_Lock", "End"))
     assert status_bar is not None
     assert status_bar.name is CommandName.READ_STATUS_BAR
@@ -86,3 +104,12 @@ def test_screen_reader_gestures_map_to_commands() -> None:
 
 def test_unbound_gesture_returns_none() -> None:
     assert command_for_gesture(("Alt", "F4")) is None
+
+
+def test_command_reference_includes_both_layouts() -> None:
+    reference = format_command_bindings()
+
+    assert "Desktop" in reference
+    assert "Laptop" in reference
+    assert "sr+end" in reference
+    assert "sr+shift+end" in reference

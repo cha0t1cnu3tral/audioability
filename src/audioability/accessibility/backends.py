@@ -5,7 +5,7 @@ from typing import Any, Protocol
 
 from audioability.accessibility.filtering import FocusEventFilter
 from audioability.accessibility.models import AccessibleNode
-from audioability.input.commands import is_screen_reader_modifier, normalize_key
+from audioability.input.commands import is_modifier_key, normalize_key
 
 
 class AccessibilityBackend(Protocol):
@@ -177,8 +177,7 @@ class AtSpiAccessibilityBackend:
         return normalized in {"keyreleasedevent", "releasedevent", "released", "release"}
 
     def _tracks_as_modifier(self, key: str) -> bool:
-        normalized = normalize_key(key)
-        return normalized in {"control", "shift"} or is_screen_reader_modifier(normalized)
+        return is_modifier_key(key)
 
     def _read_node(self, source: Any, *, depth: int) -> AccessibleNode:
         child_count = self._read_child_count(source)

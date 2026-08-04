@@ -119,15 +119,23 @@ sr+T             read window title
 sr+B             read current window
 sr+End           read status bar
 sr+Space         toggle browse/focus mode
+sr+R             repeat the last spoken message
 sr+S             cycle speech mode
-sr+N             open menu/settings
+sr+N             hear the command reference
 sr+1             input help
 sr+F2            pass next key through
 sr+Q             quit
 ```
 
 `sr` means the screen reader key: `CapsLock` or `Insert`. Laptop status bar is
-`sr+Shift+End`, because keyboards apparently needed plot twists.
+`sr+Shift+End`, because keyboards apparently needed plot twists. The desktop
+`KP_Insert`/`KP_0` key is also recognized as `Insert`.
+
+To print the complete command table without starting the screen reader:
+
+```bash
+audioability --list-commands
+```
 
 Speech modes cycle with `sr+S`:
 

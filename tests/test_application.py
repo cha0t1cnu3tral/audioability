@@ -244,6 +244,13 @@ def test_manual_focus_mode_passes_plain_keys_to_application() -> None:
     assert speech.messages == ["Focus mode"]
 
 
+def test_browse_mode_passes_unassigned_plain_keys_to_application() -> None:
+    app = ScreenReaderApplication(dry_run=True, speech_driver=NullSpeechDriver())
+
+    assert app.handle_key("Tab") is False
+    assert app.handle_key("F6") is False
+
+
 def test_browse_mode_arrow_keys_navigate_accessibility_tree() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
@@ -344,14 +351,24 @@ def test_documented_command_shortcuts_are_handled() -> None:
 
     assert backend.stopped is True
     assert app.quit_requested is True
-    assert speech.messages == [
-        "Speech mode on-demand",
-        "Menu unavailable",
+    assert speech.messages[0] == "Speech mode on-demand"
+    assert speech.messages[1].startswith("Commands. control: stop current speech")
+    assert speech.messages[2:] == [
         "Input help",
         "capslock+f2 send the next key directly to the app",
         "Audioability exiting",
         "Pause speech unavailable",
     ]
+
+
+def test_repeat_shortcut_repeats_last_spoken_text() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
+
+    assert app.handle_key("r", ("KP_Insert",)) is True
+
+    assert speech.messages == ["Search entry", "Search entry"]
 
 
 def test_pass_next_key_lets_one_key_through() -> None:
