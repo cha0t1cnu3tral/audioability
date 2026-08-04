@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 
 class SpeechDriver(Protocol):
@@ -10,6 +11,20 @@ class SpeechDriver(Protocol):
 
     def speak(self, text: str) -> None:
         """Speak text to the user."""
+
+
+@dataclass(frozen=True)
+class SpeechConfiguration:
+    rate: float = 1.0
+    volume: float = 1.0
+    voice: str = "default"
+    punctuation: str = "some"
+
+
+@runtime_checkable
+class ConfigurableSpeechDriver(Protocol):
+    def configure(self, configuration: SpeechConfiguration) -> None:
+        """Apply settings used for subsequent speech."""
 
 
 class NullSpeechDriver:
@@ -27,14 +42,54 @@ class SpeechDispatcherDriver:
 
     def __init__(self, executable: str = "spd-say") -> None:
         self.executable = executable
+        self.configuration = SpeechConfiguration()
+
+    def configure(self, configuration: SpeechConfiguration) -> None:
+        self.configuration = configuration
 
     def speak(self, text: str) -> None:
-        if shutil.which(self.executable):
-            subprocess.run([self.executable, text], check=False)
-            return
+        resolved_executable = shutil.which(self.executable)
+        if resolved_executable is not None:
+            command = [
+                resolved_executable,
+                "--rate",
+                str(self._rate_argument()),
+                "--volume",
+                str(self._volume_argument()),
+                "--punctuation-mode",
+                self.configuration.punctuation,
+            ]
+            if self.configuration.voice != "default":
+                command.extend(("--synthesis-voice", self.configuration.voice))
+            command.append(text)
+            if self._run(command):
+                return
 
         print(f"[speech fallback] {text}")
 
     def stop(self) -> None:
-        if shutil.which(self.executable):
-            subprocess.run([self.executable, "-C"], check=False)
+        resolved_executable = shutil.which(self.executable)
+        if resolved_executable is not None:
+            self._run([resolved_executable, "--cancel"])
+
+    def _rate_argument(self) -> int:
+        rate = self._clamp(self.configuration.rate, 0.5, 2.0)
+        multiplier = 200 if rate < 1.0 else 100
+        return round((rate - 1.0) * multiplier)
+
+    def _volume_argument(self) -> int:
+        volume = self._clamp(self.configuration.volume, 0.0, 1.0)
+        return round((volume * 200) - 100)
+
+    @staticmethod
+    def _run(command: list[str]) -> bool:
+        try:
+            subprocess.run(command, check=False)
+        except OSError:
+            return False
+
+        return True
+
+    @staticmethod
+    def _clamp(value: float, minimum: float, maximum: float) -> float:
+        return min(max(value, minimum), maximum)

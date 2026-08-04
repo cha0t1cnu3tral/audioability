@@ -92,6 +92,27 @@ def test_focused_node_speech_includes_state_value_children_and_shortcut() -> Non
     ]
 
 
+def test_brief_verbosity_omits_secondary_focus_details() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    for _ in range(4):
+        app.speech_controller.handle_modifier_arrow("capslock", "right", announce=False)
+    app.speech_controller.handle_modifier_arrow("capslock", "down", announce=False)
+
+    app._speak_focused_node(
+        AccessibleNode(
+            name="Volume",
+            role="slider",
+            description="Master output volume",
+            value="75",
+            shortcut="Alt+V",
+            child_count=2,
+        )
+    )
+
+    assert speech.messages == ["Volume slider 75"]
+
+
 def test_unnamed_container_speech_includes_readable_children() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from audioability.speech.controller import SpeechController, SpeechOption
+from audioability.speech.drivers import SpeechConfiguration
 
 
 class StoppableSpeechDriver:
@@ -17,6 +18,15 @@ class StoppableSpeechDriver:
     @property
     def stopped(self) -> bool:
         return self.stop_count > 0
+
+
+class ConfigurableSpeechDriver(StoppableSpeechDriver):
+    def __init__(self) -> None:
+        super().__init__()
+        self.configurations: list[SpeechConfiguration] = []
+
+    def configure(self, configuration: SpeechConfiguration) -> None:
+        self.configurations.append(configuration)
 
 
 def test_speak_tracks_last_message_and_skips_immediate_duplicates() -> None:
@@ -117,3 +127,22 @@ def test_non_capslock_arrow_is_not_handled() -> None:
 
     assert controller.handle_modifier_arrow("shift", "up") is False
     assert speech.messages == []
+
+
+def test_setting_changes_are_applied_to_configurable_driver() -> None:
+    speech = ConfigurableSpeechDriver()
+    controller = SpeechController(speech, voices=("default", "ava"))
+
+    assert speech.configurations == [SpeechConfiguration()]
+
+    controller.handle_modifier_arrow("capslock", "up", announce=False)
+    controller.handle_modifier_arrow("capslock", "right", announce=False)
+    controller.handle_modifier_arrow("capslock", "right", announce=False)
+    controller.handle_modifier_arrow("capslock", "up", announce=False)
+
+    assert speech.configurations[-1] == SpeechConfiguration(
+        rate=1.1,
+        volume=1.0,
+        voice="ava",
+        punctuation="some",
+    )

@@ -7,7 +7,11 @@ from enum import StrEnum
 from typing import Protocol, TypeVar, runtime_checkable
 
 from audioability.input.commands import is_screen_reader_modifier
-from audioability.speech.drivers import SpeechDriver
+from audioability.speech.drivers import (
+    ConfigurableSpeechDriver,
+    SpeechConfiguration,
+    SpeechDriver,
+)
 
 T = TypeVar("T")
 
@@ -76,6 +80,7 @@ class SpeechController:
         self._last_spoken_at: float | None = None
         self._selected_option_index = 0
         self.settings = SpeechSettings()
+        self._sync_driver_configuration()
 
     @property
     def last_spoken_text(self) -> str | None:
@@ -188,8 +193,22 @@ class SpeechController:
                 verbosity=self._cycle(self._verbosity_modes, self.settings.verbosity, direction),
             )
 
+        self._sync_driver_configuration()
         if announce:
             self._announce_selected_option()
+
+    def _sync_driver_configuration(self) -> None:
+        if not isinstance(self._driver, ConfigurableSpeechDriver):
+            return
+
+        self._driver.configure(
+            SpeechConfiguration(
+                rate=self.settings.rate,
+                volume=self.settings.volume,
+                voice=self._voices[self.settings.voice_index],
+                punctuation=self.settings.punctuation.value,
+            )
+        )
 
     def _announce_selected_option(self) -> None:
         self.speak(self._selected_option_message(), allow_duplicate=True)

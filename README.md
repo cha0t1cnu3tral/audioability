@@ -145,6 +145,11 @@ on-demand  suppress focus changes, but speak explicit commands
 off        suppress normal speech until the mode is changed again
 ```
 
+Use `sr+Left` and `sr+Right` to select rate, volume, voice, punctuation, or
+verbosity, then use `sr+Up` and `sr+Down` to change it. Rate, volume, voice, and
+punctuation are passed to Speech Dispatcher; brief verbosity trims secondary
+details from focused-control announcements.
+
 Object navigation:
 
 ```text

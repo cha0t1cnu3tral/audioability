@@ -18,7 +18,7 @@ from audioability.input.commands import (
     normalize_key,
 )
 from audioability.input.router import CommandRouter
-from audioability.speech.controller import SpeechController
+from audioability.speech.controller import SpeechController, VerbosityMode
 from audioability.speech.drivers import NullSpeechDriver, SpeechDispatcherDriver, SpeechDriver
 
 
@@ -369,18 +369,26 @@ class ScreenReaderApplication:
         parts = (*modifiers, key)
         return "+".join(normalize_key(part) for part in parts if part.strip())
 
-    @staticmethod
-    def _focused_node_text(node: AccessibleNode) -> str:
+    def _focused_node_text(self, node: AccessibleNode) -> str:
+        if self.speech_controller.settings.verbosity is VerbosityMode.BRIEF:
+            brief_parts = [
+                node.name,
+                node.role,
+                *self._state_text(node),
+                self._unique_detail(node.value, node.name),
+            ]
+            return " ".join(part for part in brief_parts if part)
+
         parts = [
             node.name,
             node.role,
-            *ScreenReaderApplication._state_text(node),
-            ScreenReaderApplication._unique_detail(node.value, node.name),
-            ScreenReaderApplication._unique_detail(node.text, node.name, node.description),
-            ScreenReaderApplication._unique_detail(node.placeholder, node.name, node.text),
+            *self._state_text(node),
+            self._unique_detail(node.value, node.name),
+            self._unique_detail(node.text, node.name, node.description),
+            self._unique_detail(node.placeholder, node.name, node.text),
             node.description,
-            ScreenReaderApplication._children_text(node),
-            ScreenReaderApplication._shortcut_text(node),
+            self._children_text(node),
+            self._shortcut_text(node),
         ]
         return " ".join(part for part in parts if part)
 
@@ -409,16 +417,12 @@ class ScreenReaderApplication:
         existing = {item.strip().casefold() for item in existing_values if item.strip()}
         return "" if normalized.casefold() in existing else normalized
 
-    @staticmethod
-    def _children_text(node: AccessibleNode) -> str:
-        if node.children and ScreenReaderApplication._is_unnamed_container(node):
+    def _children_text(self, node: AccessibleNode) -> str:
+        if node.children and self._is_unnamed_container(node):
             return "; ".join(
                 filter(
                     None,
-                    (
-                        ScreenReaderApplication._focused_node_text(child)
-                        for child in node.children[:5]
-                    ),
+                    (self._focused_node_text(child) for child in node.children[:5]),
                 )
             )
 
