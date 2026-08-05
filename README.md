@@ -169,6 +169,13 @@ sr+NumpadEnter  activate current object
 Audioability uses AT-SPI, the accessibility bus used by Linux screen readers. That works on
 X11 and on Wayland sessions where the compositor and app expose accessibility data.
 
+Keyboard commands use AT-SPI's global device monitor instead of an application-local key
+listener. X11 is handled directly. Global Wayland shortcuts require `at-spi2-core` 2.56 or
+newer (2.58 or newer is recommended) and a compositor that implements the accessibility
+keyboard-monitor protocol; older Wayland stacks can only report keys from the focused
+application. If commands are focus-only, update `at-spi2-core` and the desktop compositor
+together.
+
 Translation: if the app publishes useful AT-SPI objects, Audioability can read names, roles,
 descriptions, values, visible text, placeholders, states, shortcuts, and child objects. If
 the app publishes nothing, Audioability cannot read your mind. Yet.

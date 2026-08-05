@@ -25,6 +25,15 @@ class StoppableBackend:
         self.stopped = True
 
 
+class PassNextBackend(StoppableBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pass_next_calls = 0
+
+    def pass_next_key(self) -> None:
+        self.pass_next_calls += 1
+
+
 def assert_interaction_mode(app: ScreenReaderApplication, mode: InteractionMode) -> None:
     assert app.interaction_mode is mode
 
@@ -394,13 +403,20 @@ def test_repeat_shortcut_repeats_last_spoken_text() -> None:
 
 def test_pass_next_key_lets_one_key_through() -> None:
     speech = NullSpeechDriver()
-    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    backend = PassNextBackend()
+    app = ScreenReaderApplication(
+        dry_run=True,
+        accessibility_backend=backend,
+        speech_driver=speech,
+    )
     app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
 
     assert app.handle_key("F2", ("Caps_Lock",)) is True
+    assert app.handle_key("Caps_Lock") is False
     assert app.handle_key("Tab", ("Caps_Lock",)) is False
     assert app.handle_key("Tab", ("Caps_Lock",)) is True
 
+    assert backend.pass_next_calls == 1
     assert speech.messages == [
         "Search entry",
         "Pass next key",
@@ -414,6 +430,7 @@ def test_input_help_announces_next_shortcut_without_running_it() -> None:
     app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
 
     assert app.handle_key("1", ("Caps_Lock",)) is True
+    assert app.handle_key("Caps_Lock") is True
     assert app.handle_key("Tab", ("Caps_Lock",)) is True
 
     assert speech.messages == [

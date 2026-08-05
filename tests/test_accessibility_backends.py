@@ -9,7 +9,7 @@ from audioability.accessibility.backends import AtSpiAccessibilityBackend
 from audioability.accessibility.models import AccessibleNode
 
 
-def test_atspi_backend_registers_keys_for_every_modifier_mask(
+def test_atspi_backend_fallback_registers_global_keys_for_every_modifier_mask(
     monkeypatch: MonkeyPatch,
 ) -> None:
     keystroke_registrations: list[dict[str, object]] = []
@@ -44,8 +44,232 @@ def test_atspi_backend_registers_keys_for_every_modifier_mask(
         {
             "mask": tuple(range(256)),
             "kind": (1, 2),
+            "global_": True,
         }
     ]
+
+
+def test_atspi_backend_prefers_global_device_signals(monkeypatch: MonkeyPatch) -> None:
+    key_events: list[tuple[str, tuple[str, ...]]] = []
+    legacy_registrations: list[dict[str, object]] = []
+
+    class FakeKeyDefinition:
+        keysym = 0
+        modifiers = 0
+
+    class FakeDevice:
+        def __init__(self) -> None:
+            self.callbacks: dict[str, object] = {}
+            self.grabs: list[tuple[int, int]] = []
+            self.mapped: dict[int, int] = {}
+            self.disconnected: list[int] = []
+            self.removed_grabs: list[int] = []
+            self.unmapped: list[int] = []
+
+        def connect(self, signal: str, callback: object) -> int:
+            self.callbacks[signal] = callback
+            return len(self.callbacks)
+
+        def map_keysym_modifier(self, keysym: int) -> int:
+            if keysym not in self.mapped:
+                self.mapped[keysym] = 1 << (8 + len(self.mapped))
+            return self.mapped[keysym]
+
+        def add_key_grab(self, definition: FakeKeyDefinition, callback: object) -> int:
+            assert callback is None
+            self.grabs.append((definition.keysym, definition.modifiers))
+            return len(self.grabs)
+
+        def remove_key_grab(self, grab_id: int) -> None:
+            self.removed_grabs.append(grab_id)
+
+        def unmap_keysym_modifier(self, keysym: int) -> None:
+            self.unmapped.append(keysym)
+
+        def disconnect(self, signal_id: int) -> None:
+            self.disconnected.append(signal_id)
+
+    device = FakeDevice()
+    created_app_ids: list[str] = []
+
+    class FakeDeviceType:
+        @staticmethod
+        def new_full(app_id: str) -> FakeDevice:
+            created_app_ids.append(app_id)
+            return device
+
+    class FakeRegistry:
+        @staticmethod
+        def registerEventListener(callback: object, event_type: str) -> None:
+            return None
+
+        @staticmethod
+        def registerKeystrokeListener(callback: object, **options: object) -> None:
+            legacy_registrations.append(options)
+
+        @staticmethod
+        def start() -> None:
+            return None
+
+        @staticmethod
+        def stop() -> None:
+            return None
+
+    fake_atspi = SimpleNamespace(
+        Device=FakeDeviceType,
+        KeyDefinition=FakeKeyDefinition,
+        ModifierType=SimpleNamespace(SHIFT=0, CONTROL=2, ALT=3, META=4, SUPER=6),
+        get_version=lambda: (2, 60, 0),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "pyatspi",
+        SimpleNamespace(
+            Atspi=fake_atspi,
+            Registry=FakeRegistry,
+            KEY_PRESSED_EVENT=1,
+            KEY_RELEASED_EVENT=2,
+        ),
+    )
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        key_events.append((key, modifiers))
+        return True
+
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
+
+    backend.start()
+
+    assert created_app_ids == ["org.audioability.Audioability"]
+    assert legacy_registrations == []
+    assert set(device.callbacks) == {"key-pressed", "key-released"}
+    capslock_mask = device.mapped[0xFFE5]
+    assert (0xFF09, capslock_mask) in device.grabs
+    assert (0xFF99, capslock_mask) in device.grabs
+    assert (0xFFB2, capslock_mask) in device.grabs
+    assert (0xFFE3, 0) not in device.grabs
+    initial_grab_count = len(device.grabs)
+
+    pressed = device.callbacks["key-pressed"]
+    released = device.callbacks["key-released"]
+    assert callable(pressed)
+    assert callable(released)
+    pressed(device, 66, 0xFFE5, 0, "")
+    pressed(device, 23, 0xFF09, capslock_mask, "")
+    released(device, 66, 0xFFE5, 0, "")
+
+    assert key_events == [
+        ("capslock", ()),
+        ("tab", ("capslock",)),
+    ]
+
+    backend.pass_next_key()
+
+    assert len(device.removed_grabs) == initial_grab_count
+    pressed(device, 66, 0xFFE5, 0, "")
+    pressed(device, 23, 0xFF09, capslock_mask, "")
+    released(device, 66, 0xFFE5, 0, "")
+    assert len(device.grabs) == initial_grab_count * 2
+
+    backend.stop()
+
+    assert device.disconnected == [1, 2]
+    assert len(device.removed_grabs) == len(device.grabs)
+    assert device.unmapped == [0xFFE5, 0xFF63, 0xFF9E, 0xFFB0]
+
+
+def test_atspi_backend_uses_device_watcher_on_pre_260_atspi(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    callbacks: list[object] = []
+
+    class FakeDevice:
+        def add_key_watcher(self, callback: object) -> None:
+            callbacks.append(callback)
+
+    device = FakeDevice()
+
+    class FakeDeviceType:
+        @staticmethod
+        def new() -> FakeDevice:
+            return device
+
+    class FakeRegistry:
+        @staticmethod
+        def registerEventListener(callback: object, event_type: str) -> None:
+            return None
+
+        @staticmethod
+        def start() -> None:
+            return None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pyatspi",
+        SimpleNamespace(
+            Atspi=SimpleNamespace(Device=FakeDeviceType, get_version=lambda: (2, 52, 0)),
+            Registry=FakeRegistry,
+            KEY_PRESSED_EVENT=1,
+            KEY_RELEASED_EVENT=2,
+        ),
+    )
+    backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
+
+    backend.start()
+
+    assert callbacks == [backend._handle_device_key_event]
+
+
+def test_atspi_backend_disconnects_partial_signal_registration(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    disconnected: list[int] = []
+    watchers: list[object] = []
+
+    class FakeDevice:
+        def connect(self, signal: str, callback: object) -> int:
+            if signal == "key-released":
+                raise RuntimeError("signal unavailable")
+            return 41
+
+        def disconnect(self, signal_id: int) -> None:
+            disconnected.append(signal_id)
+
+        def add_key_watcher(self, callback: object) -> None:
+            watchers.append(callback)
+
+    device = FakeDevice()
+
+    class FakeDeviceType:
+        @staticmethod
+        def new_full(app_id: str) -> FakeDevice:
+            return device
+
+    class FakeRegistry:
+        @staticmethod
+        def registerEventListener(callback: object, event_type: str) -> None:
+            return None
+
+        @staticmethod
+        def start() -> None:
+            return None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pyatspi",
+        SimpleNamespace(
+            Atspi=SimpleNamespace(Device=FakeDeviceType, get_version=lambda: (2, 60, 0)),
+            Registry=FakeRegistry,
+            KEY_PRESSED_EVENT=1,
+            KEY_RELEASED_EVENT=2,
+        ),
+    )
+    backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
+
+    backend.start()
+
+    assert disconnected == [41]
+    assert watchers == [backend._handle_device_key_event]
 
 
 def test_atspi_backend_converts_focus_event_to_accessible_node() -> None:

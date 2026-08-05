@@ -12,8 +12,10 @@ developed without making the whole codebase hard to test.
 
 ## Runtime Flow
 
-1. The AT-SPI backend subscribes to focus events and keyboard events for every modifier
-   mask, then normalizes live accessible objects into immutable `AccessibleNode` trees.
+1. The AT-SPI backend subscribes to focus events and uses `Atspi.Device` for global X11
+   and Wayland keyboard monitoring. It registers only Audioability command grabs, then
+   normalizes live accessible objects into immutable `AccessibleNode` trees. Older AT-SPI
+   versions fall back to the legacy keystroke listener.
 2. The input layer normalizes Linux key names, tracks held modifiers, and resolves a
    gesture to a command without consuming unassigned application keys.
 3. The core application applies browse/focus behavior, object navigation, and speech

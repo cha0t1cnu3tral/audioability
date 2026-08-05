@@ -10,6 +10,8 @@ from audioability.input.commands import (
     format_command_bindings,
     is_modifier_key,
     is_screen_reader_modifier,
+    key_from_keysym,
+    keysym_for_key,
 )
 
 
@@ -104,6 +106,19 @@ def test_screen_reader_gestures_map_to_commands() -> None:
 
 def test_unbound_gesture_returns_none() -> None:
     assert command_for_gesture(("Alt", "F4")) is None
+
+
+def test_atspi_keysyms_are_converted_without_insertable_text() -> None:
+    assert key_from_keysym(0xFFE5) == "capslock"
+    assert key_from_keysym(0xFF09) == "tab"
+    assert key_from_keysym(0xFFBF) == "f2"
+    assert key_from_keysym(0xFF99) == "numpad2"
+    assert key_from_keysym(ord(" "), " ") == "space"
+    assert key_from_keysym(ord("S"), "S") == "S"
+
+    assert keysym_for_key("Tab") == 0xFF09
+    assert keysym_for_key("F2") == 0xFFBF
+    assert keysym_for_key("KP_Insert") == 0xFF9E
 
 
 def test_command_reference_includes_both_layouts() -> None:

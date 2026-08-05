@@ -14,6 +14,7 @@ from audioability.input.commands import (
     CommandName,
     command_binding_lines,
     command_for_gesture,
+    is_modifier_key,
     is_screen_reader_modifier,
     normalize_key,
 )
@@ -119,6 +120,9 @@ class ScreenReaderApplication:
             return self._speak_command("Input help")
         if command.name is CommandName.PASS_NEXT_KEY:
             self._pass_next_key = True
+            pass_next_key = getattr(self.accessibility_backend, "pass_next_key", None)
+            if callable(pass_next_key):
+                pass_next_key()
             return self._speak_command("Pass next key")
         if command.name is CommandName.READ_FOCUS:
             return self.speak_current_focus()
@@ -143,10 +147,14 @@ class ScreenReaderApplication:
 
     def handle_key(self, key: str, modifiers: tuple[str, ...] = ()) -> bool:
         if self._pass_next_key:
+            if is_modifier_key(key):
+                return False
             self._pass_next_key = False
             return False
 
         if self._input_help_waiting:
+            if is_modifier_key(key):
+                return True
             self._input_help_waiting = False
             return self.speak_input_help(key, modifiers)
 

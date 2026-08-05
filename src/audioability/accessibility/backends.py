@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from typing import Any, Protocol
 
 from audioability.accessibility.filtering import FocusEventFilter
 from audioability.accessibility.models import AccessibleNode
-from audioability.input.commands import is_modifier_key, normalize_key
+from audioability.input.commands import (
+    DEFAULT_COMMAND_BINDINGS,
+    is_modifier_key,
+    key_from_keysym,
+    keysym_for_key,
+    normalize_key,
+)
 
 
 class AccessibilityBackend(Protocol):
@@ -34,6 +41,8 @@ class NullAccessibilityBackend:
 
 class AtSpiAccessibilityBackend:
     """AT-SPI backend for Linux desktop accessibility events."""
+
+    _application_id = "org.audioability.Audioability"
 
     # PyAtspi defaults to mask 0, which only reports keys pressed without a
     # modifier. Register every combination from AT-SPI's eight-bit legacy
@@ -84,6 +93,13 @@ class AtSpiAccessibilityBackend:
         self.max_children_per_node = max_children_per_node
         self.max_ancestor_depth = max_ancestor_depth
         self._pressed_modifiers: set[str] = set()
+        self._keyboard_atspi: Any | None = None
+        self._keyboard_device: Any | None = None
+        self._keyboard_signal_ids: list[int] = []
+        self._key_grab_ids: list[int] = []
+        self._key_grabs_suspended = False
+        self._mapped_reader_keysyms: list[int] = []
+        self._reader_modifier_masks: dict[int, str] = {}
 
     def start(self) -> None:
         try:
@@ -96,16 +112,18 @@ class AtSpiAccessibilityBackend:
         for event_type in self.event_types:
             pyatspi.Registry.registerEventListener(self._handle_event, event_type)
 
-        if self.on_key is not None:
+        if self.on_key is not None and not self._start_device_key_listener(pyatspi):
             pyatspi.Registry.registerKeystrokeListener(
                 self._handle_key_event,
                 mask=self._modifier_masks,
                 kind=(pyatspi.KEY_PRESSED_EVENT, pyatspi.KEY_RELEASED_EVENT),
+                global_=True,
             )
 
         pyatspi.Registry.start()
 
     def stop(self) -> None:
+        self._stop_device_key_listener()
         try:
             import pyatspi  # type: ignore[import-not-found, import-untyped, unused-ignore]
         except ImportError:
@@ -131,25 +149,365 @@ class AtSpiAccessibilityBackend:
             self.on_focus(node)
 
     def _handle_key_event(self, event: Any) -> bool:
-        key = self._read_key_event_string(event)
+        event_text = self._read_key_event_string(event)
+        event_keysym = getattr(event, "id", 0)
+        key = (
+            key_from_keysym(event_keysym, event_text)
+            if isinstance(event_keysym, int)
+            else event_text
+        )
         if not key:
             return False
 
-        if self._is_key_release_event(event):
+        modifiers = getattr(event, "modifiers", 0)
+        modifier_mask = modifiers if isinstance(modifiers, int) else 0
+        return self._handle_key_transition(
+            key,
+            pressed=not self._is_key_release_event(event),
+            modifier_mask=modifier_mask,
+        )
+
+    def _handle_device_key_event(
+        self,
+        _device: Any,
+        pressed: bool,
+        _keycode: int,
+        keysym: int,
+        modifiers: int,
+        text: str,
+    ) -> bool:
+        key = key_from_keysym(keysym, text)
+        if not key:
+            return False
+
+        return self._handle_key_transition(key, pressed=pressed, modifier_mask=modifiers)
+
+    def _handle_device_key_pressed(
+        self,
+        _device: Any,
+        _keycode: int,
+        keysym: int,
+        modifiers: int,
+        text: str,
+    ) -> None:
+        self._handle_device_key_event(_device, True, _keycode, keysym, modifiers, text)
+
+    def _handle_device_key_released(
+        self,
+        _device: Any,
+        _keycode: int,
+        keysym: int,
+        modifiers: int,
+        text: str,
+    ) -> None:
+        self._handle_device_key_event(_device, False, _keycode, keysym, modifiers, text)
+
+    def _handle_key_transition(
+        self,
+        key: str,
+        *,
+        pressed: bool,
+        modifier_mask: int = 0,
+    ) -> bool:
+        if not pressed:
             self._pressed_modifiers.discard(normalize_key(key))
             return False
 
-        handled = self._dispatch_key_event(key)
+        grabs_were_suspended = self._key_grabs_suspended
+        handled = self._dispatch_key_event(key, modifier_mask)
         if self._tracks_as_modifier(key):
             self._pressed_modifiers.add(normalize_key(key))
+        elif grabs_were_suspended:
+            self._resume_device_key_grabs()
 
         return handled
 
-    def _dispatch_key_event(self, key: str) -> bool:
+    def _dispatch_key_event(self, key: str, modifier_mask: int = 0) -> bool:
         if self.on_key is None:
             return False
 
-        return self.on_key(key, tuple(sorted(self._pressed_modifiers)))
+        modifiers = self._pressed_modifiers | self._modifier_names_from_mask(modifier_mask)
+        return self.on_key(key, tuple(sorted(modifiers)))
+
+    def pass_next_key(self) -> None:
+        """Temporarily release command grabs so one complete gesture can pass through."""
+
+        device = self._keyboard_device
+        if device is None or not self._key_grab_ids:
+            return
+
+        self._remove_device_key_grabs(device)
+        self._key_grabs_suspended = True
+
+    def _start_device_key_listener(self, pyatspi: Any) -> bool:
+        """Use AT-SPI's global X11/Wayland device API when available."""
+
+        atspi = getattr(pyatspi, "Atspi", None)
+        device_type = getattr(atspi, "Device", None)
+        if device_type is None:
+            return False
+
+        new_full = getattr(device_type, "new_full", None)
+        new = getattr(device_type, "new", None)
+        try:
+            if callable(new_full):
+                device = new_full(self._application_id)
+            elif callable(new):
+                device = new()
+            else:
+                return False
+        except Exception:
+            return False
+
+        if device is None or not self._connect_device_key_listener(atspi, device):
+            return False
+
+        self._keyboard_atspi = atspi
+        self._keyboard_device = device
+        self._register_device_key_grabs(atspi, device)
+        return True
+
+    def _connect_device_key_listener(self, atspi: Any, device: Any) -> bool:
+        connect = getattr(device, "connect", None)
+        if self._atspi_version(atspi) >= (2, 60) and callable(connect):
+            signal_ids: list[int] = []
+            try:
+                signal_ids.append(connect("key-pressed", self._handle_device_key_pressed))
+                signal_ids.append(connect("key-released", self._handle_device_key_released))
+            except Exception:
+                disconnect = getattr(device, "disconnect", None)
+                if callable(disconnect):
+                    for signal_id in signal_ids:
+                        with suppress(Exception):
+                            disconnect(signal_id)
+            else:
+                self._keyboard_signal_ids = signal_ids
+                return True
+
+        add_key_watcher = getattr(device, "add_key_watcher", None)
+        if not callable(add_key_watcher):
+            return False
+
+        try:
+            add_key_watcher(self._handle_device_key_event)
+        except Exception:
+            return False
+        return True
+
+    def _register_device_key_grabs(self, atspi: Any, device: Any) -> None:
+        add_key_grab = getattr(device, "add_key_grab", None)
+        map_keysym_modifier = getattr(device, "map_keysym_modifier", None)
+        key_definition_type = getattr(atspi, "KeyDefinition", None)
+        if (
+            not callable(add_key_grab)
+            or not callable(map_keysym_modifier)
+            or not callable(key_definition_type)
+        ):
+            return
+
+        if not self._mapped_reader_keysyms:
+            for name, keysym in self._screen_reader_modifier_keysyms():
+                try:
+                    modifier = map_keysym_modifier(keysym)
+                except Exception:
+                    continue
+                if not isinstance(modifier, int) or modifier == 0:
+                    continue
+                self._mapped_reader_keysyms.append(keysym)
+                self._reader_modifier_masks[modifier] = name
+
+        reader_modifiers = tuple(self._reader_modifier_masks)
+
+        registered: set[tuple[int, int]] = set()
+        for gesture in self._grab_gestures():
+            key = gesture[-1]
+            modifier_names = gesture[:-1]
+            base_modifier = self._standard_modifier_mask(atspi, modifier_names)
+            modifiers = reader_modifiers if "sr" in modifier_names else [0]
+            for reader_modifier in modifiers:
+                modifier = base_modifier | reader_modifier
+                for keysym in self._keysyms_for_grab(key):
+                    registration = (keysym, modifier)
+                    if registration in registered:
+                        continue
+                    try:
+                        definition = key_definition_type()
+                        definition.keysym = keysym
+                        definition.modifiers = modifier
+                        grab_id = add_key_grab(definition, None)
+                    except Exception:
+                        continue
+                    registered.add(registration)
+                    if isinstance(grab_id, int) and grab_id != 0:
+                        self._key_grab_ids.append(grab_id)
+
+    def _remove_device_key_grabs(self, device: Any) -> None:
+        remove_key_grab = getattr(device, "remove_key_grab", None)
+        if callable(remove_key_grab):
+            for grab_id in self._key_grab_ids:
+                with suppress(Exception):
+                    remove_key_grab(grab_id)
+        self._key_grab_ids.clear()
+
+    def _resume_device_key_grabs(self) -> None:
+        if not self._key_grabs_suspended:
+            return
+
+        self._key_grabs_suspended = False
+        if self._keyboard_atspi is not None and self._keyboard_device is not None:
+            self._register_device_key_grabs(self._keyboard_atspi, self._keyboard_device)
+
+    def _stop_device_key_listener(self) -> None:
+        device = self._keyboard_device
+        self._keyboard_atspi = None
+        self._keyboard_device = None
+        self._pressed_modifiers.clear()
+        if device is None:
+            self._key_grabs_suspended = False
+            return
+
+        self._remove_device_key_grabs(device)
+
+        unmap_keysym_modifier = getattr(device, "unmap_keysym_modifier", None)
+        if callable(unmap_keysym_modifier):
+            for keysym in self._mapped_reader_keysyms:
+                with suppress(Exception):
+                    unmap_keysym_modifier(keysym)
+
+        disconnect = getattr(device, "disconnect", None)
+        if callable(disconnect):
+            for signal_id in self._keyboard_signal_ids:
+                with suppress(Exception):
+                    disconnect(signal_id)
+
+        self._keyboard_signal_ids.clear()
+        self._key_grabs_suspended = False
+        self._mapped_reader_keysyms.clear()
+        self._reader_modifier_masks.clear()
+
+    def _modifier_names_from_mask(self, mask: int) -> set[str]:
+        names = {
+            name
+            for bit, name in (
+                (1 << 0, "shift"),
+                (1 << 2, "control"),
+                (1 << 3, "alt"),
+                (1 << 4, "meta"),
+                (1 << 5, "meta"),
+                (1 << 6, "super"),
+            )
+            if mask & bit
+        }
+        names.update(name for bit, name in self._reader_modifier_masks.items() if mask & bit)
+        return names
+
+    @staticmethod
+    def _atspi_version(atspi: Any) -> tuple[int, int]:
+        get_version = getattr(atspi, "get_version", None)
+        if not callable(get_version):
+            return (0, 0)
+        try:
+            version = get_version()
+        except Exception:
+            return (0, 0)
+        if not isinstance(version, Sequence) or len(version) < 2:
+            return (0, 0)
+        major, minor = version[0], version[1]
+        if not isinstance(major, int) or not isinstance(minor, int):
+            return (0, 0)
+        return (major, minor)
+
+    @staticmethod
+    def _screen_reader_modifier_keysyms() -> tuple[tuple[str, int], ...]:
+        return (
+            ("capslock", 0xFFE5),
+            ("insert", 0xFF63),
+            ("insert", 0xFF9E),
+            ("insert", 0xFFB0),
+        )
+
+    @staticmethod
+    def _grab_gestures() -> tuple[tuple[str, ...], ...]:
+        gestures = {
+            tuple(normalize_key(part) for part in gesture.split("+"))
+            for binding in DEFAULT_COMMAND_BINDINGS
+            for gesture in (binding.desktop_key, binding.laptop_key)
+            if "+" in gesture
+        }
+        gestures.update(
+            {
+                ("sr", key)
+                for key in (
+                    "left",
+                    "right",
+                    "up",
+                    "down",
+                    "numpad8",
+                    "numpad4",
+                    "numpad5",
+                    "numpad6",
+                    "numpad2",
+                    "numpad9",
+                    "numpad3",
+                    "numpadminus",
+                    "numpadenter",
+                )
+            }
+        )
+        return tuple(sorted(gestures))
+
+    @staticmethod
+    def _standard_modifier_mask(atspi: Any, names: tuple[str, ...]) -> int:
+        modifier_type = getattr(atspi, "ModifierType", None)
+        fallback_indexes = {
+            "shift": 0,
+            "control": 2,
+            "alt": 3,
+            "meta": 4,
+            "super": 6,
+        }
+        mask = 0
+        for name in names:
+            if name == "sr":
+                continue
+            index = fallback_indexes.get(name)
+            enum_value = getattr(modifier_type, name.upper(), None)
+            if enum_value is not None:
+                with suppress(TypeError, ValueError):
+                    index = int(enum_value)
+            if index is not None:
+                mask |= 1 << index
+        return mask
+
+    @staticmethod
+    def _keysyms_for_grab(key: str) -> tuple[int, ...]:
+        normalized = normalize_key(key)
+        paired_modifiers = {
+            "control": (0xFFE3, 0xFFE4),
+            "shift": (0xFFE1, 0xFFE2),
+            "alt": (0xFFE9, 0xFFEA),
+            "meta": (0xFFE7, 0xFFE8),
+            "super": (0xFFEB, 0xFFEC),
+        }
+        if normalized in paired_modifiers:
+            return paired_modifiers[normalized]
+        keypad_navigation_keysyms = {
+            "numpad0": 0xFF9E,
+            "numpad1": 0xFF9C,
+            "numpad2": 0xFF99,
+            "numpad3": 0xFF9B,
+            "numpad4": 0xFF96,
+            "numpad5": 0xFF9D,
+            "numpad6": 0xFF98,
+            "numpad7": 0xFF95,
+            "numpad8": 0xFF97,
+            "numpad9": 0xFF9A,
+        }
+        if normalized in keypad_navigation_keysyms:
+            digit = int(normalized[-1])
+            return (keypad_navigation_keysyms[normalized], 0xFFB0 + digit)
+        keysym = keysym_for_key(normalized)
+        return (keysym,) if keysym is not None else ()
 
     @staticmethod
     def _read_key_event_string(event: Any) -> str:
