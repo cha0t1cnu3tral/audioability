@@ -210,7 +210,7 @@ def test_setting_changes_are_applied_to_configurable_driver() -> None:
     )
 
 
-def test_english_is_the_initial_language_when_available() -> None:
+def test_us_english_is_the_preferred_initial_language_when_available() -> None:
     speech = ConfigurableSpeechDriver()
     SpeechController(
         speech,
@@ -222,7 +222,7 @@ def test_english_is_the_initial_language_when_available() -> None:
     )
 
     assert speech.configurations == [
-        SpeechConfiguration(voice="English default", language="en")
+        SpeechConfiguration(voice="English US", language="en-US")
     ]
 
 

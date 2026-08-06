@@ -296,8 +296,9 @@ class SpeechController:
 
     def _preferred_english_language_index(self) -> int:
         normalized = tuple(language.casefold().replace("_", "-") for language in self._languages)
-        if "en" in normalized:
-            return normalized.index("en")
+        for preferred in ("en-us", "en", "en-gb"):
+            if preferred in normalized:
+                return normalized.index(preferred)
         for index, language in enumerate(normalized):
             if language.startswith("en-") or language == "english":
                 return index
