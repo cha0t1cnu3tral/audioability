@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from typing import Any, Protocol
@@ -13,6 +14,8 @@ from audioability.input.commands import (
     keysym_for_key,
     normalize_key,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AccessibilityBackend(Protocol):
@@ -112,7 +115,8 @@ class AtSpiAccessibilityBackend:
         for event_type in self.event_types:
             pyatspi.Registry.registerEventListener(self._handle_event, event_type)
 
-        if self.on_key is not None and not self._start_device_key_listener(pyatspi):
+        using_device_listener = self.on_key is not None and self._start_device_key_listener(pyatspi)
+        if self.on_key is not None and not using_device_listener:
             pyatspi.Registry.registerKeystrokeListener(
                 self._handle_key_event,
                 mask=self._modifier_masks,
@@ -120,9 +124,15 @@ class AtSpiAccessibilityBackend:
                 global_=True,
             )
 
+        logger.info(
+            "atspi_start event_types=%r keyboard_listener=%s",
+            self.event_types,
+            "device" if using_device_listener else "registry",
+        )
         pyatspi.Registry.start()
 
     def stop(self) -> None:
+        logger.info("atspi_stop")
         self._stop_device_key_listener()
         try:
             import pyatspi  # type: ignore[import-not-found, import-untyped, unused-ignore]
@@ -137,7 +147,9 @@ class AtSpiAccessibilityBackend:
 
         source = getattr(event, "source", None)
         node = self._read_node(source, depth=self.max_tree_depth)
+        logger.debug("atspi_event type=%r node=%r", getattr(event, "type", None), node)
         if not self.event_filter.accepts(event, node):
+            logger.debug("atspi_event_rejected type=%r", getattr(event, "type", None))
             return
 
         if self.on_focus_tree is not None:
@@ -209,6 +221,13 @@ class AtSpiAccessibilityBackend:
         pressed: bool,
         modifier_mask: int = 0,
     ) -> bool:
+        logger.debug(
+            "key_transition key=%r pressed=%s modifier_mask=%s pressed_modifiers=%r",
+            key,
+            pressed,
+            modifier_mask,
+            sorted(self._pressed_modifiers),
+        )
         if not pressed:
             self._pressed_modifiers.discard(normalize_key(key))
             return False
@@ -238,6 +257,7 @@ class AtSpiAccessibilityBackend:
 
         self._remove_device_key_grabs(device)
         self._key_grabs_suspended = True
+        logger.info("key_grabs_suspended")
 
     def _start_device_key_listener(self, pyatspi: Any) -> bool:
         """Use AT-SPI's global X11/Wayland device API when available."""

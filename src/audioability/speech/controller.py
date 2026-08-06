@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -14,6 +15,7 @@ from audioability.speech.drivers import (
 )
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
 class SpeechOption(StrEnum):
@@ -97,10 +99,12 @@ class SpeechController:
 
         now = self._clock()
         if not allow_duplicate and self._is_duplicate_spam(cleaned_text, now):
+            logger.debug("speech_duplicate_suppressed text=%r", cleaned_text)
             return False
 
         if isinstance(self._driver, StoppableSpeechDriver):
             self._driver.stop()
+        logger.debug("speech_dispatch text=%r settings=%r", cleaned_text, self.settings)
         self._driver.speak(cleaned_text)
         self._last_spoken_text = cleaned_text
         self._last_spoken_at = now
@@ -111,6 +115,7 @@ class SpeechController:
             return False
 
         self._driver.stop()
+        logger.debug("speech_stopped")
         return True
 
     def repeat_last(self) -> bool:

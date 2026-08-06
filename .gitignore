@@ -11,8 +11,12 @@ htmlcov/
 
 # Virtual environments
 .venv/
+.venv-linux/
 venv/
 env/
+
+# Local interactive test sessions
+logs/
 
 # Build output
 build/

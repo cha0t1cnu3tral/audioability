@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from enum import StrEnum
 
 from audioability.accessibility.backends import (
@@ -21,6 +22,8 @@ from audioability.input.commands import (
 from audioability.input.router import CommandRouter
 from audioability.speech.controller import SpeechController, VerbosityMode
 from audioability.speech.drivers import NullSpeechDriver, SpeechDispatcherDriver, SpeechDriver
+
+logger = logging.getLogger(__name__)
 
 
 class InteractionMode(StrEnum):
@@ -103,6 +106,7 @@ class ScreenReaderApplication:
         )
 
     def run(self) -> None:
+        logger.info("application_start dry_run=%s", self.dry_run)
         if self.dry_run:
             self._speak_status("Audioability initialized in dry-run mode.")
             return
@@ -111,6 +115,12 @@ class ScreenReaderApplication:
         self.accessibility_backend.start()
 
     def handle_command(self, command: Command) -> bool:
+        logger.debug(
+            "command name=%s mode=%s speech_mode=%s",
+            command.name,
+            self.interaction_mode,
+            self.speech_mode,
+        )
         if command.name is CommandName.QUIT:
             return self.quit()
         if command.name is CommandName.OPEN_MENU:
@@ -146,6 +156,7 @@ class ScreenReaderApplication:
         return False
 
     def handle_key(self, key: str, modifiers: tuple[str, ...] = ()) -> bool:
+        logger.debug("key key=%r modifiers=%r mode=%s", key, modifiers, self.interaction_mode)
         if self._pass_next_key:
             if is_modifier_key(key):
                 return False
@@ -178,19 +189,23 @@ class ScreenReaderApplication:
 
     def cycle_speech_mode(self) -> bool:
         self._speech_mode_index = (self._speech_mode_index + 1) % len(self._speech_modes)
+        logger.info("speech_mode_changed mode=%s", self.speech_mode)
         return self._speak_status(f"Speech mode {self.speech_mode.value}")
 
     def toggle_browse_focus_mode(self) -> bool:
         if self.interaction_mode is InteractionMode.BROWSE:
             self.interaction_mode = InteractionMode.FOCUS
             self._focus_mode_auto_entered = False
+            logger.info("interaction_mode_changed mode=%s automatic=false", self.interaction_mode)
             return self._speak_command("Focus mode")
 
         self.interaction_mode = InteractionMode.BROWSE
         self._focus_mode_auto_entered = False
+        logger.info("interaction_mode_changed mode=%s automatic=false", self.interaction_mode)
         return self._speak_command("Browse mode")
 
     def quit(self) -> bool:
+        logger.info("quit_requested")
         self.quit_requested = True
         self.accessibility_backend.stop()
         return self._speak_status("Audioability exiting")
@@ -280,6 +295,7 @@ class ScreenReaderApplication:
             self._speak_auto(text)
 
     def _speak_focused_tree(self, root: AccessibleNode, focused: AccessibleNode) -> None:
+        logger.debug("focus_tree focused=%r root=%r", focused, root)
         self.current_focus = focused
         self.object_navigator.set_root(root)
         self.object_navigator.set_focus(focused)
@@ -497,6 +513,7 @@ class ScreenReaderApplication:
         return self._speech_modes[self._speech_mode_index]
 
     def _speak_auto(self, text: str) -> bool:
+        logger.debug("speech_auto mode=%s text=%r", self.speech_mode, text)
         if self.speech_mode is not SpeechMode.TALK:
             return False
 
@@ -507,9 +524,12 @@ class ScreenReaderApplication:
         if not cleaned_text:
             return False
         if self.speech_mode is SpeechMode.OFF:
+            logger.debug("speech_command_suppressed mode=off text=%r", cleaned_text)
             return True
 
+        logger.debug("speech_command text=%r", cleaned_text)
         return self.speech_controller.speak(cleaned_text, allow_duplicate=True)
 
     def _speak_status(self, text: str) -> bool:
+        logger.info("speech_status text=%r", text)
         return self.speech_controller.speak(text, allow_duplicate=True)
