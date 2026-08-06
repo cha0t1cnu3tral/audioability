@@ -54,6 +54,50 @@ def test_object_navigator_skips_non_showing_subtrees() -> None:
     assert navigator.run(ObjectNavigationAction.MOVE_TO_NEXT_FLAT).node is shown_button
 
 
+def test_object_navigator_includes_offscreen_web_document_content() -> None:
+    offscreen_heading = AccessibleNode(
+        "Patterns",
+        "heading",
+        state=frozenset({"visible", "enabled"}),
+    )
+    offscreen_section = AccessibleNode(
+        "",
+        "section",
+        state=frozenset({"visible", "enabled"}),
+        children=(offscreen_heading,),
+    )
+    document = AccessibleNode(
+        "APG",
+        "document web",
+        state=frozenset({"visible", "showing", "enabled"}),
+        children=(offscreen_section,),
+    )
+    navigator = ObjectNavigator(document)
+
+    assert navigator.run(ObjectNavigationAction.MOVE_TO_NEXT_FLAT).node is offscreen_section
+    assert navigator.run(ObjectNavigationAction.MOVE_TO_NEXT_FLAT).node is offscreen_heading
+
+
+def test_object_navigator_keeps_non_showing_ancestors_of_web_focus() -> None:
+    heading = AccessibleNode("Patterns", "heading")
+    document = AccessibleNode(
+        "APG",
+        "document web",
+        children=(heading,),
+    )
+    offscreen_panel = AccessibleNode(
+        "",
+        "panel",
+        state=frozenset({"visible", "enabled"}),
+        children=(document,),
+    )
+    root = AccessibleNode("Browser", "frame", children=(offscreen_panel,))
+    navigator = ObjectNavigator(root)
+    navigator.set_focus(document)
+
+    assert navigator.run(ObjectNavigationAction.MOVE_TO_NEXT_FLAT).node is heading
+
+
 def test_object_navigator_does_not_activate_disabled_control() -> None:
     activated = False
 

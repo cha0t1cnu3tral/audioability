@@ -316,12 +316,45 @@ class ScreenReaderApplication:
 
     def navigate_object(self, action: ObjectNavigationAction) -> bool:
         result = self.object_navigator.run(action)
+        if (
+            not result.handled
+            and action
+            in {
+                ObjectNavigationAction.MOVE_TO_PREVIOUS_FLAT,
+                ObjectNavigationAction.MOVE_TO_NEXT_FLAT,
+            }
+            and self.object_navigator.current is self.object_navigator.focus
+            and self._refresh_navigation_tree()
+        ):
+            result = self.object_navigator.run(action)
+        if not result.handled and result.message:
+            return self._speak_command(result.message)
         if result.node is not None:
             return self._speak_command(self._focused_node_text(result.node))
         if result.message:
             return self._speak_command(result.message)
 
         return result.handled
+
+    def _refresh_navigation_tree(self) -> bool:
+        refresh_focus_tree = getattr(self.accessibility_backend, "refresh_focus_tree", None)
+        if not callable(refresh_focus_tree):
+            return False
+        refreshed = refresh_focus_tree()
+        if refreshed is None:
+            return False
+
+        root, focused = refreshed
+        self.current_focus = focused
+        self.object_navigator.set_root(root)
+        self.object_navigator.set_focus(focused)
+        self._sync_interaction_mode_for_focus(focused)
+        logger.debug(
+            "focus_tree_refreshed root_name=%r focused_name=%r",
+            root.name,
+            focused.name,
+        )
+        return True
 
     def navigate_quick(self, key: str, *, direction: int) -> bool:
         label = self._quick_navigation_label(key)

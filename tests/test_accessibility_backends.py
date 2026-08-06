@@ -222,7 +222,7 @@ def test_atspi_backend_deduplicates_delayed_grab_callback(
     monkeypatch: MonkeyPatch,
 ) -> None:
     key_events: list[tuple[str, tuple[str, ...]]] = []
-    times = iter((100.0, 100.056, 100.060, 100.061))
+    times = iter((100.0, 100.3, 100.301, 100.4, 100.401, 100.5, 100.501))
     monkeypatch.setattr(
         "audioability.accessibility.backends.time.monotonic", lambda: next(times)
     )
@@ -508,6 +508,38 @@ def test_atspi_backend_uses_legacy_device_on_pre_255_atspi(
 
     assert signals == []
     assert callbacks == [backend._handle_device_key_event]
+    assert backend._legacy_device_listener is True
+
+
+def test_atspi_backend_never_mutates_live_legacy_grabs(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    scheduled: list[object] = []
+    removed: list[int] = []
+    backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
+    backend._keyboard_atspi = object()
+    backend._keyboard_device = SimpleNamespace(remove_key_grab=removed.append)
+    backend._key_grab_ids = [17]
+    backend._legacy_device_listener = True
+
+    def schedule_refresh() -> bool:
+        scheduled.append(backend._apply_device_key_grab_profile)
+        return True
+
+    monkeypatch.setattr(
+        backend,
+        "_schedule_device_key_grab_refresh",
+        schedule_refresh,
+    )
+
+    backend.set_browse_mode(False)
+    backend.pass_next_key()
+
+    assert scheduled == []
+    assert removed == []
+    assert backend._key_grab_ids == [17]
+    assert backend._apply_device_key_grab_profile() is False
+    assert removed == []
 
 
 def test_atspi_backend_uses_key_watcher_before_signal_api_is_available() -> None:
@@ -1038,6 +1070,28 @@ def test_atspi_backend_stops_focus_tree_at_top_level_window() -> None:
     assert focused.name == "Save"
 
 
+def test_atspi_backend_uses_web_document_as_browse_tree_root() -> None:
+    focus_events: list[tuple[AccessibleNode, AccessibleNode]] = []
+    focused_source = FakeTreeAccessible(name="Read This First", role="heading")
+    document_source = FakeTreeAccessible(
+        focused_source,
+        name="Patterns",
+        role="document web",
+    )
+    panel_source = FakeTreeAccessible(document_source, name="", role="panel")
+    FakeTreeAccessible(panel_source, name="Browser", role="frame")
+    backend = AtSpiAccessibilityBackend(
+        on_focus_tree=lambda root, focused: focus_events.append((root, focused))
+    )
+
+    backend._handle_event(SimpleNamespace(source=focused_source, detail1=1))
+
+    root, focused = focus_events[0]
+    assert root.name == "Patterns"
+    assert root.role == "document web"
+    assert focused.name == "Read This First"
+
+
 def test_atspi_backend_bounds_large_focus_trees() -> None:
     focus_events: list[tuple[AccessibleNode, AccessibleNode]] = []
     focused_source = FakeTreeAccessible(name="Focused", role="button")
@@ -1062,6 +1116,66 @@ def test_atspi_backend_bounds_large_focus_trees() -> None:
     assert root.name == "Large window"
     assert focused.name == "Focused"
     assert len(root.children) == 9
+
+
+def test_atspi_backend_preserves_depth_below_deep_focus() -> None:
+    focus_events: list[tuple[AccessibleNode, AccessibleNode]] = []
+    focused_source = FakeTreeAccessible(
+        FakeTreeAccessible(name="First document object", role="heading"),
+        name="Document",
+        role="document web",
+    )
+    branch = focused_source
+    for level in range(8):
+        branch = FakeTreeAccessible(branch, name=f"Ancestor {level}", role="section")
+    FakeTreeAccessible(branch, name="Browser", role="frame")
+    backend = AtSpiAccessibilityBackend(
+        on_focus_tree=lambda root, focused: focus_events.append((root, focused)),
+        max_tree_depth=2,
+    )
+
+    backend._handle_event(SimpleNamespace(source=focused_source, detail1=1))
+
+    _, focused = focus_events[0]
+    assert focused.name == "Document"
+    assert [child.name for child in focused.children] == ["First document object"]
+
+
+def test_atspi_backend_reserves_node_budget_for_focus_branch() -> None:
+    focus_events: list[tuple[AccessibleNode, AccessibleNode]] = []
+    focused_source = FakeTreeAccessible(
+        FakeTreeAccessible(name="First document object", role="heading"),
+        name="Document",
+        role="document web",
+    )
+    expensive_siblings = tuple(
+        FakeTreeAccessible(
+            *(
+                FakeTreeAccessible(name=f"Item {parent}-{child}", role="section")
+                for child in range(10)
+            ),
+            name=f"Toolbar {parent}",
+            role="tool bar",
+        )
+        for parent in range(5)
+    )
+    FakeTreeAccessible(
+        *expensive_siblings,
+        focused_source,
+        name="Browser",
+        role="frame",
+    )
+    backend = AtSpiAccessibilityBackend(
+        on_focus_tree=lambda root, focused: focus_events.append((root, focused)),
+        max_tree_depth=4,
+        max_nodes_per_tree=12,
+    )
+
+    backend._handle_event(SimpleNamespace(source=focused_source, detail1=1))
+
+    _, focused = focus_events[0]
+    assert focused.name == "Document"
+    assert [child.name for child in focused.children] == ["First document object"]
 
 
 def test_atspi_backend_contains_accessibility_proxy_errors() -> None:

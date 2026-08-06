@@ -135,6 +135,7 @@ class AtSpiAccessibilityBackend:
         self._reader_modifier_by_keysym: dict[int, int] = {}
         self._keyboard_captured = False
         self._browse_mode_active = True
+        self._legacy_device_listener = False
         self._device_grab_refresh_pending = False
         self._key_callback_depth = 0
         self._stop_pending = False
@@ -147,6 +148,7 @@ class AtSpiAccessibilityBackend:
         self._last_device_event_at = 0.0
         self._last_device_event_handled = False
         self._deferred_modifier_keys: set[str] = set()
+        self._focused_source: Any | None = None
 
     def start(self) -> None:
         try:
@@ -252,12 +254,30 @@ class AtSpiAccessibilityBackend:
             return
 
         if self.on_focus_tree is not None:
+            self._focused_source = source
             root, focused = self._read_focus_tree(source, fallback_focus=node)
             self.on_focus_tree(root, focused)
             return
 
         if self.on_focus is not None:
             self.on_focus(node)
+
+    def refresh_focus_tree(self) -> tuple[AccessibleNode, AccessibleNode] | None:
+        """Read a fresh tree for the last accepted focus without announcing it."""
+
+        source = self._focused_source
+        if source is None:
+            return None
+        try:
+            fallback_focus = self._read_node(
+                source,
+                depth=min(self.max_tree_depth, 2),
+                node_budget=[self.max_nodes_per_tree],
+            )
+            return self._read_focus_tree(source, fallback_focus=fallback_focus)
+        except Exception:
+            logger.exception("atspi_focus_tree_refresh_error")
+            return None
 
     def _handle_key_event(self, event: Any) -> bool:
         self._key_callback_depth += 1
@@ -315,7 +335,10 @@ class AtSpiAccessibilityBackend:
                 modifier_mask=modifiers,
             )
             self._last_device_event = signature
-            self._last_device_event_at = now
+            # A watcher callback can spend hundreds of milliseconds refreshing
+            # a large browser tree before the duplicate grab callback runs.
+            # Measure the duplicate window from completed dispatch, not entry.
+            self._last_device_event_at = time.monotonic()
             self._last_device_event_handled = handled
             return handled
         except Exception:
@@ -435,6 +458,7 @@ class AtSpiAccessibilityBackend:
         if (
             self._keyboard_atspi is not None
             and self._keyboard_device is not None
+            and not self._legacy_device_listener
             and not self._key_grabs_suspended
             and not self._device_grab_refresh_pending
         ):
@@ -472,7 +496,12 @@ class AtSpiAccessibilityBackend:
         self._device_grab_refresh_pending = False
         atspi = self._keyboard_atspi
         device = self._keyboard_device
-        if atspi is None or device is None or self._key_grabs_suspended:
+        if (
+            atspi is None
+            or device is None
+            or self._legacy_device_listener
+            or self._key_grabs_suspended
+        ):
             return False
 
         self._remove_device_key_grabs(device)
@@ -485,6 +514,12 @@ class AtSpiAccessibilityBackend:
 
         device = self._keyboard_device
         if device is None or not self._key_grab_ids:
+            return
+        if self._legacy_device_listener:
+            # DeviceLegacy can pass a grabbed event through when its callback
+            # returns False. Mutating its native grab list while Registry.start
+            # owns the event loop can segfault inside libatspi.
+            logger.info("key_grabs_logically_suspended legacy_device=true")
             return
 
         self._key_grabs_suspended = True
@@ -510,6 +545,11 @@ class AtSpiAccessibilityBackend:
 
     def capture_keyboard(self, active: bool) -> bool:
         """Capture all keys temporarily for modal input help."""
+
+        if self._legacy_device_listener:
+            self._keyboard_captured = active
+            logger.info("keyboard_capture active=%s legacy_device=true", active)
+            return True
 
         if self._key_callback_depth:
             self._pending_keyboard_capture = active
@@ -577,7 +617,11 @@ class AtSpiAccessibilityBackend:
         except Exception:
             return False
 
-        if device is None or not self._connect_device_key_listener(atspi, device):
+        if device is None:
+            return False
+        self._legacy_device_listener = self._is_legacy_device(atspi, device)
+        if not self._connect_device_key_listener(atspi, device):
+            self._legacy_device_listener = False
             return False
 
         self._keyboard_atspi = atspi
@@ -596,7 +640,7 @@ class AtSpiAccessibilityBackend:
         # DeviceLegacy is a GObject and accepts these signal connections, but
         # versions before the compositor-backed Device API never emit them.
         # Use its key watcher instead of mistaking connectability for support.
-        if self._atspi_version(atspi) >= (2, 55) and callable(connect):
+        if not self._legacy_device_listener and callable(connect):
             signal_ids: list[int] = []
             try:
                 signal_ids.append(connect("key-pressed", self._handle_device_key_pressed))
@@ -716,7 +760,7 @@ class AtSpiAccessibilityBackend:
         self._key_grab_ids.clear()
 
     def _resume_device_key_grabs(self) -> None:
-        if not self._key_grabs_suspended:
+        if not self._key_grabs_suspended or self._legacy_device_listener:
             return
 
         self._key_grabs_suspended = False
@@ -738,6 +782,19 @@ class AtSpiAccessibilityBackend:
 
     def _stop_device_key_listener(self) -> None:
         device = self._keyboard_device
+        if device is not None and self._legacy_device_listener:
+            # Explicitly removing DeviceLegacy grabs has a reproducible native
+            # use-after-free in libatspi. Registry.stop and process teardown
+            # release the controller safely without mutating its live lists.
+            logger.info("legacy_device_cleanup_deferred_to_process_exit")
+            self._device_grab_refresh_pending = False
+            self._key_grab_suspend_pending = False
+            self._key_grab_resume_pending = False
+            self._keyboard_capture_pending = False
+            self._pending_keyboard_capture = None
+            self._pressed_modifiers.clear()
+            return
+
         self._keyboard_atspi = None
         self._keyboard_device = None
         self._device_grab_refresh_pending = False
@@ -785,6 +842,16 @@ class AtSpiAccessibilityBackend:
         self._mapped_reader_keycodes.clear()
         self._reader_modifier_masks.clear()
         self._reader_modifier_by_keysym.clear()
+
+    def _is_legacy_device(self, atspi: Any, device: Any) -> bool:
+        gtype = getattr(device, "__gtype__", None)
+        type_names = (
+            str(getattr(gtype, "name", "")),
+            type(device).__name__,
+        )
+        return self._atspi_version(atspi) < (2, 55) or any(
+            "legacy" in name.casefold() for name in type_names
+        )
 
     def _modifier_names_from_mask(self, mask: int) -> set[str]:
         names = {
@@ -1096,6 +1163,16 @@ class AtSpiAccessibilityBackend:
             if source_id in seen:
                 break
             seen.add(source_id)
+
+            # A web document is the stable browse-mode boundary. Firefox's
+            # chrome above it mutates during loading and can invalidate the
+            # recorded child indexes before the tree read completes.
+            if self._read_role(root).casefold().replace("-", " ") in {
+                "document",
+                "document web",
+                "web document",
+            }:
+                break
 
             parent = self._read_parent(root)
             if parent is None:
@@ -1446,15 +1523,30 @@ class AtSpiAccessibilityBackend:
                 break
             child = self._read_child(source, index)
             if child is not None:
+                is_focus_child = bool(focus_path) and index == focus_path[0]
                 child_focus_path = (
                     focus_path[1:]
-                    if focus_path and index == focus_path[0]
+                    if is_focus_child
                     else ()
                 )
+                if is_focus_child:
+                    child_depth = depth
+                elif focus_path:
+                    # Preserve sibling indexes needed by _node_at_path without
+                    # letting unrelated Firefox chrome exhaust the node budget
+                    # before the focused document branch is read.
+                    child_depth = 0
+                else:
+                    child_depth = max(depth - 1, 0)
                 children.append(
                     self._read_node(
                         child,
-                        depth=max(depth - 1, 0),
+                        # Reaching a deeply nested focus must not consume the
+                        # depth intended for reading below that focus. Firefox
+                        # commonly nests its document beneath more ancestors
+                        # than max_tree_depth. The node budget still bounds
+                        # work across both the focus path and its siblings.
+                        depth=child_depth,
                         focus_path=child_focus_path,
                         node_budget=node_budget,
                     )

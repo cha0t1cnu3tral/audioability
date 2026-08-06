@@ -67,6 +67,17 @@ class BrowseModeBackend(StoppableBackend):
         self.browse_states.append(active)
 
 
+class RefreshingBackend(StoppableBackend):
+    def __init__(self, tree: tuple[AccessibleNode, AccessibleNode]) -> None:
+        super().__init__()
+        self.tree = tree
+        self.refresh_calls = 0
+
+    def refresh_focus_tree(self) -> tuple[AccessibleNode, AccessibleNode]:
+        self.refresh_calls += 1
+        return self.tree
+
+
 def assert_interaction_mode(app: ScreenReaderApplication, mode: InteractionMode) -> None:
     assert app.interaction_mode is mode
 
@@ -108,6 +119,39 @@ def test_focused_tree_enables_navigation_outside_focused_node() -> None:
         "Search entry",
         "Cancel button",
         "Controls panel 2 items",
+    ]
+
+
+def test_flat_navigation_refreshes_a_focus_tree_captured_during_page_load() -> None:
+    speech = NullSpeechDriver()
+    focused = AccessibleNode(name="Document", role="document web", child_count=1)
+    heading = AccessibleNode(name="Patterns", role="heading")
+    refreshed_focus = AccessibleNode(
+        name="Document",
+        role="document web",
+        child_count=1,
+        children=(heading,),
+    )
+    refreshed_root = AccessibleNode(
+        name="Browser",
+        role="frame",
+        children=(refreshed_focus,),
+    )
+    backend = RefreshingBackend((refreshed_root, refreshed_focus))
+    app = ScreenReaderApplication(
+        dry_run=True,
+        speech_driver=speech,
+        accessibility_backend=backend,
+    )
+    app._speak_focused_tree(focused, focused)
+
+    assert app.handle_key("down") is True
+
+    assert backend.refresh_calls == 1
+    assert app.object_navigator.current is heading
+    assert speech.messages == [
+        "Document document web 1 item",
+        "Patterns heading",
     ]
 
 

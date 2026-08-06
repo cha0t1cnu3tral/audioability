@@ -381,11 +381,42 @@ class ObjectNavigator:
 
         return None
 
-    def _flatten(self, node: AccessibleNode) -> tuple[AccessibleNode, ...]:
+    def _flatten(
+        self,
+        node: AccessibleNode,
+        *,
+        include_offscreen: bool = False,
+        focus_path_ids: frozenset[int] | None = None,
+    ) -> tuple[AccessibleNode, ...]:
+        if focus_path_ids is None:
+            focus_path = (
+                self._find_path(node, self.focus)
+                if self.focus is not None
+                else None
+            )
+            focus_path_ids = frozenset(id(item) for item in focus_path or ())
+        include_offscreen = include_offscreen or self._normalized_role(node) in {
+            "document",
+            "document web",
+            "web document",
+        }
         states = {state.casefold().replace("-", " ") for state in node.state}
-        if "visible" in states and "showing" not in states:
+        if (
+            not include_offscreen
+            and id(node) not in focus_path_ids
+            and "visible" in states
+            and "showing" not in states
+        ):
             return ()
-        descendants = tuple(child for item in node.children for child in self._flatten(item))
+        descendants = tuple(
+            child
+            for item in node.children
+            for child in self._flatten(
+                item,
+                include_offscreen=include_offscreen,
+                focus_path_ids=focus_path_ids,
+            )
+        )
         return (node, *descendants)
 
     @staticmethod
