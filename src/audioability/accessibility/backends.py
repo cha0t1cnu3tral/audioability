@@ -117,6 +117,7 @@ class AtSpiAccessibilityBackend:
         self._key_grabs_suspended = False
         self._mapped_reader_keysyms: list[int] = []
         self._reader_modifier_masks: dict[int, str] = {}
+        self._keyboard_captured = False
         self._last_device_event: tuple[bool, int, int, int, str] | None = None
         self._last_device_event_at = 0.0
         self._last_device_event_handled = False
@@ -133,20 +134,21 @@ class AtSpiAccessibilityBackend:
         for event_type in self.event_types:
             pyatspi.Registry.registerEventListener(self._handle_event, event_type)
 
-        if self.on_key is not None:
+        using_device_listener = self.on_key is not None and self._start_device_key_listener(pyatspi)
+        if self.on_key is not None and not using_device_listener:
             pyatspi.Registry.registerKeystrokeListener(
                 self._handle_key_event,
                 mask=self._modifier_masks,
                 kind=(pyatspi.KEY_PRESSED_EVENT, pyatspi.KEY_RELEASED_EVENT),
                 synchronous=True,
                 preemptive=True,
-                global_=True,
+                global_=False,
             )
 
         logger.info(
             "atspi_start event_types=%r keyboard_listener=%s",
             self.event_types,
-            "registry" if self.on_key is not None else "none",
+            "device" if using_device_listener else "registry",
         )
         pyatspi.Registry.start()
 
@@ -318,6 +320,33 @@ class AtSpiAccessibilityBackend:
         self._key_grabs_suspended = True
         logger.info("key_grabs_suspended")
 
+    def capture_keyboard(self, active: bool) -> bool:
+        """Capture all keys temporarily for modal input help."""
+
+        device = self._keyboard_device
+        if device is None:
+            return False
+
+        if active:
+            grab_keyboard = getattr(device, "grab_keyboard", None)
+            if not callable(grab_keyboard):
+                return False
+            try:
+                captured = bool(grab_keyboard())
+            except Exception:
+                return False
+            self._keyboard_captured = captured
+            logger.info("keyboard_capture active=%s", captured)
+            return captured
+
+        ungrab_keyboard = getattr(device, "ungrab_keyboard", None)
+        if self._keyboard_captured and callable(ungrab_keyboard):
+            with suppress(Exception):
+                ungrab_keyboard()
+        self._keyboard_captured = False
+        logger.info("keyboard_capture active=false")
+        return True
+
     def _start_device_key_listener(self, pyatspi: Any) -> bool:
         """Use AT-SPI's global X11/Wayland device API when available."""
 
@@ -444,6 +473,14 @@ class AtSpiAccessibilityBackend:
         if device is None:
             self._key_grabs_suspended = False
             return
+
+
+        if self._keyboard_captured:
+            ungrab_keyboard = getattr(device, "ungrab_keyboard", None)
+            if callable(ungrab_keyboard):
+                with suppress(Exception):
+                    ungrab_keyboard()
+            self._keyboard_captured = False
 
         self._remove_device_key_grabs(device)
 

@@ -145,6 +145,9 @@ class ScreenReaderApplication:
             return self._speak_command("Commands. " + ". ".join(command_binding_lines()))
         if command.name is CommandName.INPUT_HELP:
             self._input_help_active = not self._input_help_active
+            capture_keyboard = getattr(self.accessibility_backend, "capture_keyboard", None)
+            if callable(capture_keyboard):
+                capture_keyboard(self._input_help_active)
             state = "on" if self._input_help_active else "off"
             return self._speak_command(f"Input help {state}")
         if command.name is CommandName.PASS_NEXT_KEY:

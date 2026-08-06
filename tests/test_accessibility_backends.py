@@ -46,7 +46,7 @@ def test_atspi_backend_fallback_registers_global_keys_for_every_modifier_mask(
             "kind": (1, 2),
             "synchronous": True,
             "preemptive": True,
-            "global_": True,
+            "global_": False,
         }
     ]
 
@@ -212,6 +212,25 @@ def test_atspi_backend_only_dispatches_shift_when_used_alone() -> None:
     backend._handle_device_key_released(None, 50, 0xFFE1, 1, "")
 
     assert key_events[-1] == ("shiftl", ("shift",))
+
+
+def test_atspi_backend_captures_and_releases_keyboard_for_modal_input() -> None:
+    calls: list[str] = []
+
+    class Device:
+        def grab_keyboard(self) -> bool:
+            calls.append("grab")
+            return True
+
+        def ungrab_keyboard(self) -> None:
+            calls.append("ungrab")
+
+    backend = AtSpiAccessibilityBackend()
+    backend._keyboard_device = Device()
+
+    assert backend.capture_keyboard(True) is True
+    assert backend.capture_keyboard(False) is True
+    assert calls == ["grab", "ungrab"]
 
 
 def test_atspi_backend_uses_device_watcher_on_pre_260_atspi(

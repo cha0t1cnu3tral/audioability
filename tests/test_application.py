@@ -48,6 +48,16 @@ class PassNextBackend(StoppableBackend):
         self.pass_next_calls += 1
 
 
+class CaptureBackend(StoppableBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.capture_states: list[bool] = []
+
+    def capture_keyboard(self, active: bool) -> bool:
+        self.capture_states.append(active)
+        return True
+
+
 def assert_interaction_mode(app: ScreenReaderApplication, mode: InteractionMode) -> None:
     assert app.interaction_mode is mode
 
@@ -620,7 +630,12 @@ def test_pass_next_key_lets_one_key_through() -> None:
 
 def test_input_help_stays_active_until_shortcut_is_pressed_again() -> None:
     speech = NullSpeechDriver()
-    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    backend = CaptureBackend()
+    app = ScreenReaderApplication(
+        dry_run=True,
+        accessibility_backend=backend,
+        speech_driver=speech,
+    )
     app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
 
     assert app.handle_key("1", ("Caps_Lock",)) is True
@@ -638,6 +653,7 @@ def test_input_help_stays_active_until_shortcut_is_pressed_again() -> None:
         "Input help off",
         "Search entry",
     ]
+    assert backend.capture_states == [True, False]
 
 
 def test_input_help_describes_browse_mode_quick_navigation() -> None:
