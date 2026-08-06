@@ -17,6 +17,8 @@ env/
 
 # Local interactive test sessions
 logs/
+scripts/accessibility-test-app.py
+scripts/run-accessibility-test.sh
 
 # Build output
 build/
