@@ -23,9 +23,20 @@ For a smoke test that does not need a desktop accessibility session:
 ./audioability-linux.run --dry-run
 ```
 
-The runner checks for common Linux package managers, installs missing accessibility and
-speech packages when it can, unpacks Audioability into `~/.local/share/audioability`, builds
-a venv, and starts the screen reader. Yes, it does chores. Somebody had to.
+The runner detects apt, dnf/dnf5, yum, pacman, zypper, or apk; installs or updates the
+required accessibility and speech packages; verifies its embedded payload; installs
+Audioability into `~/.local/share/audioability`; creates `~/.local/bin/audioability`; and
+starts the screen reader. Running the same file again updates the dependencies and installed
+copy. The previous application payload is retained as `app.previous` for recovery.
+
+To install or update without immediately starting the screen reader:
+
+```bash
+./audioability-linux.run --install-only
+```
+
+Use `--no-system-packages` when an administrator has already installed the dependencies and
+the runner should not invoke the operating system's package manager.
 
 ## Run From Source
 

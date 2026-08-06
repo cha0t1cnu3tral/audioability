@@ -30,6 +30,11 @@ if ! command -v base64 >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v sha256sum >/dev/null 2>&1; then
+  echo "sha256sum is required to build the release runner." >&2
+  exit 1
+fi
+
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -42,7 +47,8 @@ mkdir -p "$(dirname "$OUTPUT")"
     | tar --null --files-from - --transform 's,^,audioability/,' -czf "$payload"
 )
 
-cp "$RUNNER" "$OUTPUT"
+payload_sha256="$(sha256sum "$payload" | awk '{ print $1 }')"
+sed "s/__AUDIOABILITY_PAYLOAD_SHA256__/$payload_sha256/g" "$RUNNER" > "$OUTPUT"
 base64 "$payload" >> "$OUTPUT"
 chmod +x "$OUTPUT"
 
