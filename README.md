@@ -146,10 +146,26 @@ on-demand  suppress focus changes, but speak explicit commands
 off        suppress normal speech until the mode is changed again
 ```
 
-Use `sr+Left` and `sr+Right` to select rate, volume, voice, punctuation, or
-verbosity, then use `sr+Up` and `sr+Down` to change it. Rate, volume, voice, and
+Use `sr+Left` and `sr+Right` to select rate, volume, language, voice, punctuation, or
+verbosity, then use `sr+Up` and `sr+Down` to change it. Rate, volume, language, voice, and
 punctuation are passed to Speech Dispatcher; brief verbosity trims secondary
 details from focused-control announcements.
+
+Browse mode supports NVDA-style single-letter navigation. Use the letter to move
+forward and add Shift to move backward:
+
+```text
+H heading                 L list                 I list item
+T table                   K link                 N non-linked text
+F form field              U unvisited link       V visited link
+E edit field              B button               X check box
+C combo box               R radio button         Q block quote
+S separator               M frame                G graphic
+D landmark                O embedded object      A annotation
+P text paragraph          W spelling error       1-9 heading level
+```
+
+Comma moves past the current list or table, and Shift+Comma moves to its start.
 
 Object navigation:
 

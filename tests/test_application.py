@@ -360,6 +360,106 @@ def test_browse_mode_arrow_keys_navigate_accessibility_tree() -> None:
     ]
 
 
+def test_browse_mode_single_letter_quick_navigation_and_shift_reverse() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    first = AccessibleNode(name="Overview", role="heading", attributes=("level:1",))
+    button = AccessibleNode(name="Save", role="push button")
+    second = AccessibleNode(name="Details", role="heading", attributes=("level:2",))
+    root = AccessibleNode(name="Document", role="document", children=(first, button, second))
+    app.object_navigator.set_root(root)
+
+    assert app.handle_key("h") is True
+    assert app.handle_key("b") is True
+    assert app.handle_key("h") is True
+    assert app.handle_key("h", ("shift",)) is True
+
+    assert speech.messages == [
+        "Overview heading level 1",
+        "Save push button",
+        "Details heading level 2",
+        "Overview heading level 1",
+    ]
+
+
+def test_browse_mode_supports_all_nvda_default_quick_navigation_categories() -> None:
+    cases = {
+        "h": AccessibleNode("Heading", "heading", attributes=("level:3",)),
+        "3": AccessibleNode("Heading", "heading", attributes=("level:3",)),
+        "l": AccessibleNode("Topics", "list"),
+        "i": AccessibleNode("First", "list item"),
+        "t": AccessibleNode("Data", "table"),
+        "k": AccessibleNode("Home", "link"),
+        "n": AccessibleNode("Plain", "paragraph"),
+        "f": AccessibleNode("Name", "entry", state=frozenset({"editable"})),
+        "u": AccessibleNode("New link", "link"),
+        "v": AccessibleNode("Old link", "link", state=frozenset({"visited"})),
+        "e": AccessibleNode("Editor", "text", state=frozenset({"editable"})),
+        "b": AccessibleNode("Save", "button"),
+        "x": AccessibleNode("Remember", "check box"),
+        "c": AccessibleNode("Priority", "combo box"),
+        "r": AccessibleNode("Express", "radio button"),
+        "q": AccessibleNode("Quote", "block quote"),
+        "s": AccessibleNode("Rule", "separator"),
+        "m": AccessibleNode("Frame", "frame"),
+        "g": AccessibleNode("Logo", "image"),
+        "d": AccessibleNode("Navigation", "landmark"),
+        "o": AccessibleNode("Preferences", "dialog"),
+        "a": AccessibleNode("Review", "annotation"),
+        "p": AccessibleNode("Paragraph", "paragraph"),
+        "w": AccessibleNode("Mistake", "text", state=frozenset({"invalid"})),
+    }
+
+    for key, target in cases.items():
+        app = ScreenReaderApplication(dry_run=True, speech_driver=NullSpeechDriver())
+        app.object_navigator.set_root(
+            AccessibleNode("Document", "document", children=(target,))
+        )
+        assert app.handle_key(key) is True, key
+        assert app.object_navigator.current is target, key
+
+
+def test_radio_and_check_box_speech_reports_checked_and_not_checked() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    app._speak_focused_node(
+        AccessibleNode("Standard", "radio button", state=frozenset({"checked"}))
+    )
+    app._speak_focused_node(AccessibleNode("Express", "radio button"))
+    app._speak_focused_node(AccessibleNode("Remember", "check box"))
+
+    assert speech.messages == [
+        "Standard radio button checked",
+        "Express radio button not checked",
+        "Remember check box not checked",
+    ]
+
+
+def test_focusable_table_enters_focus_mode_for_native_tree_navigation() -> None:
+    speech = NullSpeechDriver()
+    focus_calls = 0
+
+    def focus_table() -> bool:
+        nonlocal focus_calls
+        focus_calls += 1
+        return True
+
+    table = AccessibleNode(
+        "Projects",
+        "table",
+        state=frozenset({"focusable"}),
+        focus_action=focus_table,
+    )
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app.object_navigator.set_root(AccessibleNode("Window", "frame", children=(table,)))
+    app.handle_key("t")
+
+    assert app.handle_key("enter") is True
+    assert focus_calls == 1
+    assert_interaction_mode(app, InteractionMode.FOCUS)
+
+
 def test_status_bar_gesture_reports_missing_status_bar() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
@@ -503,9 +603,24 @@ def test_input_help_stays_active_until_shortcut_is_pressed_again() -> None:
         "Search entry",
         "Input help on",
         "capslock+tab read the currently focused control",
-        "Unassigned",
+        "x next check box",
         "Input help off",
         "Search entry",
+    ]
+
+
+def test_input_help_describes_browse_mode_quick_navigation() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    assert app.handle_key("1", ("Caps_Lock",)) is True
+    assert app.handle_key("h") is True
+    assert app.handle_key("h", ("shift",)) is True
+
+    assert speech.messages == [
+        "Input help on",
+        "h next heading",
+        "shift+h previous heading",
     ]
 
 

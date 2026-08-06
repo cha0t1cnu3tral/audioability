@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -65,6 +66,65 @@ class ObjectNavigator:
             return self._activate_current()
 
         return ObjectNavigationResult(False, message="Unknown object navigation command")
+
+    def move_to_match(
+        self,
+        predicate: Callable[[AccessibleNode], bool],
+        *,
+        direction: int,
+        label: str,
+    ) -> ObjectNavigationResult:
+        if self.current is None or self.root is None:
+            return ObjectNavigationResult(False, message=f"No {label}")
+
+        flattened = self._flatten(self.root)
+        current_index = self._identity_index(flattened, self.current)
+        if current_index is None:
+            return ObjectNavigationResult(False, message=f"No {label}")
+
+        indexes = (
+            range(current_index + 1, len(flattened))
+            if direction > 0
+            else range(current_index - 1, -1, -1)
+        )
+        for index in indexes:
+            if predicate(flattened[index]):
+                self.current = flattened[index]
+                return ObjectNavigationResult(True, self.current)
+
+        relative = "next" if direction > 0 else "previous"
+        return ObjectNavigationResult(False, message=f"No {relative} {label}")
+
+    def move_to_container_boundary(self, *, to_start: bool) -> ObjectNavigationResult:
+        if self.current is None or self.root is None:
+            return ObjectNavigationResult(False, message="No containing list or table")
+
+        path = self._path_to_current()
+        if path is None:
+            return ObjectNavigationResult(False, message="No containing list or table")
+        container_roles = {"list", "list box", "table", "tree", "tree table"}
+        container = next(
+            (
+                node
+                for node in reversed(path)
+                if node.role.casefold().replace("-", " ") in container_roles
+            ),
+            None,
+        )
+        if container is None:
+            return ObjectNavigationResult(False, message="No containing list or table")
+
+        if to_start:
+            self.current = container.children[0] if container.children else container
+            return ObjectNavigationResult(True, self.current)
+
+        flattened = self._flatten(self.root)
+        descendants = self._flatten(container)
+        last_index = self._identity_index(flattened, descendants[-1])
+        if last_index is None or last_index + 1 >= len(flattened):
+            return ObjectNavigationResult(False, message="No object after container")
+        self.current = flattened[last_index + 1]
+        return ObjectNavigationResult(True, self.current)
 
     def _report_current(self) -> ObjectNavigationResult:
         if self.current is None:

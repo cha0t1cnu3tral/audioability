@@ -62,6 +62,67 @@ def test_object_navigator_activates_current_object() -> None:
     assert activated is True
 
 
+def test_object_navigator_moves_to_next_and_previous_matching_object() -> None:
+    heading = AccessibleNode(name="Overview", role="heading")
+    button = AccessibleNode(name="Save", role="button")
+    second_heading = AccessibleNode(name="Details", role="heading")
+    root = AccessibleNode(
+        name="Document",
+        role="document",
+        children=(heading, button, second_heading),
+    )
+    navigator = ObjectNavigator(root)
+
+    result = navigator.move_to_match(
+        lambda node: node.role == "heading",
+        direction=1,
+        label="heading",
+    )
+    assert result.node is heading
+    result = navigator.move_to_match(
+        lambda node: node.role == "heading",
+        direction=1,
+        label="heading",
+    )
+    assert result.node is second_heading
+    result = navigator.move_to_match(
+        lambda node: node.role == "heading",
+        direction=-1,
+        label="heading",
+    )
+    assert result.node is heading
+
+
+def test_object_navigator_reports_when_no_matching_object_remains() -> None:
+    root = AccessibleNode(name="Document", role="document")
+    navigator = ObjectNavigator(root)
+
+    result = navigator.move_to_match(
+        lambda node: node.role == "heading",
+        direction=1,
+        label="heading",
+    )
+
+    assert result.handled is False
+    assert result.message == "No next heading"
+
+
+def test_object_navigator_moves_to_start_and_past_container() -> None:
+    first = AccessibleNode("First", "list item")
+    second = AccessibleNode("Second", "list item")
+    items = AccessibleNode("Topics", "list", children=(first, second))
+    after = AccessibleNode("After", "heading")
+    root = AccessibleNode("Document", "document", children=(items, after))
+    navigator = ObjectNavigator(root)
+    navigator.current = second
+
+    result = navigator.move_to_container_boundary(to_start=True)
+    assert result.node is first
+    navigator.current = second
+    result = navigator.move_to_container_boundary(to_start=False)
+    assert result.node is after
+
+
 def test_object_navigator_reports_missing_action() -> None:
     navigator = ObjectNavigator(AccessibleNode(name="Label", role="label"))
 

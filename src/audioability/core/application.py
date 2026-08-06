@@ -229,6 +229,20 @@ class ScreenReaderApplication:
     def speak_input_help(self, key: str, modifiers: tuple[str, ...] = ()) -> bool:
         command = command_for_gesture((*modifiers, key))
         if command is None:
+            normalized_key = normalize_key(key)
+            normalized_modifiers = {normalize_key(modifier) for modifier in modifiers}
+            label = self._quick_navigation_label(normalized_key)
+            if label is not None and normalized_modifiers.issubset({"shift"}):
+                direction = "previous" if "shift" in normalized_modifiers else "next"
+                gesture = self._gesture_text(key, modifiers)
+                return self._speak_command(f"{gesture} {direction} {label}")
+            if normalized_key in {",", "<"} and normalized_modifiers.issubset({"shift"}):
+                action = (
+                    "start of container"
+                    if normalized_modifiers or normalized_key == "<"
+                    else "past end of container"
+                )
+                return self._speak_command(f"{self._gesture_text(key, modifiers)} {action}")
             return self._speak_command("Unassigned")
 
         return self._speak_command(f"{self._gesture_text(key, modifiers)} {command.description}")
@@ -276,6 +290,30 @@ class ScreenReaderApplication:
         if result.message:
             return self._speak_command(result.message)
 
+        return result.handled
+
+    def navigate_quick(self, key: str, *, direction: int) -> bool:
+        label = self._quick_navigation_label(key)
+        if label is None:
+            return False
+
+        result = self.object_navigator.move_to_match(
+            lambda node: self._matches_quick_navigation(node, key),
+            direction=direction,
+            label=label,
+        )
+        if result.node is not None:
+            return self._speak_command(self._focused_node_text(result.node))
+        if result.message:
+            return self._speak_command(result.message)
+        return result.handled
+
+    def navigate_container_boundary(self, *, to_start: bool) -> bool:
+        result = self.object_navigator.move_to_container_boundary(to_start=to_start)
+        if result.node is not None:
+            return self._speak_command(self._focused_node_text(result.node))
+        if result.message:
+            return self._speak_command(result.message)
         return result.handled
 
     def handle_modifier_numpad(self, modifier_key: str, numpad_key: str) -> bool:
@@ -331,20 +369,32 @@ class ScreenReaderApplication:
             self._focus_mode_auto_entered = True
 
     def _handle_interaction_mode_key(self, key: str, modifiers: tuple[str, ...]) -> bool:
-        if modifiers:
-            return False
-
         normalized_key = normalize_key(key)
+        normalized_modifiers = {normalize_key(modifier) for modifier in modifiers}
         if (
             self.interaction_mode is InteractionMode.FOCUS
             and self._focus_mode_auto_entered
             and normalized_key == "esc"
+            and not normalized_modifiers
         ):
             self.interaction_mode = InteractionMode.BROWSE
             self._focus_mode_auto_entered = False
             return self._speak_command("Browse mode")
 
         if self.interaction_mode is InteractionMode.FOCUS:
+            return False
+
+        if normalized_modifiers.issubset({"shift"}):
+            if normalized_key in {",", "<"}:
+                return self.navigate_container_boundary(
+                    to_start="shift" in normalized_modifiers or normalized_key == "<"
+                )
+            label = self._quick_navigation_label(normalized_key)
+            if label is not None:
+                direction = -1 if "shift" in normalized_modifiers else 1
+                return self.navigate_quick(normalized_key, direction=direction)
+
+        if normalized_modifiers:
             return False
 
         target = self.object_navigator.current or self.current_focus
@@ -374,6 +424,7 @@ class ScreenReaderApplication:
         states = {state.casefold().replace("-", " ") for state in node.state}
         return bool(
             {"editable", "expanded"}.intersection(states)
+            or (role == "table" and "focusable" in states)
             or role
             in {
                 "combo box",
@@ -404,6 +455,101 @@ class ScreenReaderApplication:
         }.get(key.removeprefix("arrow"))
 
     @staticmethod
+    def _quick_navigation_label(key: str) -> str | None:
+        labels = {
+            "h": "heading",
+            "l": "list",
+            "i": "list item",
+            "t": "table",
+            "k": "link",
+            "n": "non-linked text",
+            "f": "form field",
+            "u": "unvisited link",
+            "v": "visited link",
+            "e": "edit field",
+            "b": "button",
+            "x": "check box",
+            "c": "combo box",
+            "r": "radio button",
+            "q": "block quote",
+            "s": "separator",
+            "m": "frame",
+            "g": "graphic",
+            "d": "landmark",
+            "o": "embedded object",
+            "a": "annotation",
+            "p": "text paragraph",
+            "w": "spelling error",
+        }
+        if key in "123456789":
+            return f"heading level {key}"
+        return labels.get(key)
+
+    @classmethod
+    def _matches_quick_navigation(cls, node: AccessibleNode, key: str) -> bool:
+        role = node.role.casefold().replace("-", " ")
+        states = {state.casefold().replace("-", " ") for state in node.state}
+        button_roles = {
+            "button",
+            "push button",
+            "toggle button",
+            "drop down button",
+            "menu button",
+        }
+        edit_roles = {"entry", "editable text", "password text", "text", "text area"}
+        form_roles = button_roles | edit_roles | {
+            "check box",
+            "check menu item",
+            "combo box",
+            "list",
+            "list box",
+            "radio button",
+            "slider",
+            "spin button",
+            "tree",
+            "tree table",
+        }
+        heading = role == "heading" or role.startswith("heading level")
+        link = role in {"link", "hyperlink"}
+        matches = {
+            "h": heading,
+            "l": role in {"list", "list box"},
+            "i": role in {"list item", "list box item"},
+            "t": role in {"table", "tree table"},
+            "k": link,
+            "n": role in {"label", "paragraph", "static", "static text"},
+            "f": role in form_roles,
+            "u": link and "visited" not in states,
+            "v": link and "visited" in states,
+            "e": role in edit_roles and ("editable" in states or role != "text"),
+            "b": role in button_roles,
+            "x": role in {"check box", "check menu item"},
+            "c": role in {"combo box", "combobox"},
+            "r": role == "radio button",
+            "q": role in {"block quote", "blockquote"},
+            "s": role in {"separator", "horizontal separator", "vertical separator"},
+            "m": role in {"frame", "internal frame"},
+            "g": role in {"canvas", "graphic", "icon", "image"},
+            "d": role in {"landmark", "header", "footer", "navigation"}
+            or bool(cls._attribute_value(node, "xml-roles")),
+            "o": role in {
+                "application",
+                "audio",
+                "dialog",
+                "embedded",
+                "embedded object",
+                "plugin",
+                "video",
+            },
+            "a": role in {"annotation", "comment", "footnote", "endnote"},
+            "p": role == "paragraph",
+            "w": "invalid" in states or role == "spelling error",
+        }
+        if key in "123456789":
+            return heading and cls._heading_level(node) == int(key)
+        return matches.get(key, False)
+
+    @staticmethod
     def _screen_reader_modifier_from(modifiers: tuple[str, ...]) -> str | None:
         return next(
             (modifier for modifier in modifiers if is_screen_reader_modifier(modifier)),
@@ -421,6 +567,7 @@ class ScreenReaderApplication:
                 node.name,
                 node.role,
                 *self._state_text(node),
+                self._level_text(node),
                 self._unique_detail(node.value, node.name),
             ]
             return " ".join(part for part in brief_parts if part)
@@ -429,6 +576,8 @@ class ScreenReaderApplication:
             node.name,
             node.role,
             *self._state_text(node),
+            self._level_text(node),
+            self._position_text(node),
             self._unique_detail(node.value, node.name),
             self._unique_detail(node.text, node.name, node.description),
             self._unique_detail(node.placeholder, node.name, node.text),
@@ -452,7 +601,46 @@ class ScreenReaderApplication:
             "disabled",
         )
         states = set(node.state)
-        return tuple(state for state in spoken_states if state in states)
+        result = [state for state in spoken_states if state in states]
+        role = node.role.casefold().replace("-", " ")
+        if role in {"check box", "check menu item", "radio button"} and "checked" not in states:
+            result.insert(0, "not checked")
+        if role == "toggle button" and "pressed" not in states:
+            result.insert(0, "not pressed")
+        return tuple(result)
+
+    @classmethod
+    def _level_text(cls, node: AccessibleNode) -> str:
+        level = cls._heading_level(node) or cls._numeric_attribute(node, "level")
+        return f"level {level}" if level is not None else ""
+
+    @classmethod
+    def _position_text(cls, node: AccessibleNode) -> str:
+        position = cls._numeric_attribute(node, "posinset")
+        size = cls._numeric_attribute(node, "setsize")
+        return f"{position} of {size}" if position is not None and size is not None else ""
+
+    @classmethod
+    def _heading_level(cls, node: AccessibleNode) -> int | None:
+        level = cls._numeric_attribute(node, "level")
+        if level is not None:
+            return level
+        words = node.role.casefold().replace("-", " ").split()
+        return int(words[-1]) if words and words[-1].isdigit() else None
+
+    @classmethod
+    def _numeric_attribute(cls, node: AccessibleNode, name: str) -> int | None:
+        value = cls._attribute_value(node, name)
+        return int(value) if value.isdigit() else None
+
+    @staticmethod
+    def _attribute_value(node: AccessibleNode, name: str) -> str:
+        for attribute in node.attributes:
+            for separator in (":", "="):
+                prefix = f"{name}{separator}"
+                if attribute.casefold().startswith(prefix):
+                    return attribute[len(prefix) :].strip()
+        return ""
 
     @staticmethod
     def _unique_detail(value: str, *existing_values: str) -> str:

@@ -45,6 +45,13 @@ class FocusEventFilter:
 
     @staticmethod
     def _is_focus_lost_event(event: Any) -> bool:
+        event_type = getattr(event, "type", "")
+        if (
+            isinstance(event_type, str)
+            and event_type
+            and "state-changed:focused" not in event_type
+        ):
+            return False
         detail1 = getattr(event, "detail1", None)
         return isinstance(detail1, int) and detail1 == 0
 

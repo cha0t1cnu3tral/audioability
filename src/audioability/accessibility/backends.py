@@ -71,6 +71,7 @@ class AtSpiAccessibilityBackend:
         "sensitive",
         "showing",
         "visible",
+        "visited",
     )
 
     def __init__(
@@ -78,6 +79,7 @@ class AtSpiAccessibilityBackend:
         *,
         event_types: Sequence[str] = (
             "object:state-changed:focused",
+            "object:active-descendant-changed",
             "object:text-changed:insert",
         ),
         on_focus: Callable[[AccessibleNode], None] | None = None,
@@ -156,6 +158,8 @@ class AtSpiAccessibilityBackend:
             return
 
         source = getattr(event, "source", None)
+        if "active-descendant-changed" in event_type:
+            source = self._read_active_descendant(event) or source
         node = self._read_node(source, depth=self.max_tree_depth)
         logger.debug("atspi_event type=%r node=%r", getattr(event, "type", None), node)
         if not self.event_filter.accepts(event, node):
@@ -577,6 +581,7 @@ class AtSpiAccessibilityBackend:
             text=self._read_text(source),
             placeholder=self._read_attribute(source, "placeholder-text"),
             shortcut=self._read_shortcut(source),
+            attributes=self._read_attributes(source),
             state=self._read_state(source),
             child_count=child_count,
             children=self._read_children(source, child_count, depth=depth),
@@ -707,16 +712,34 @@ class AtSpiAccessibilityBackend:
         return text.strip() if isinstance(text, str) else ""
 
     def _read_attribute(self, source: Any, name: str) -> str:
-        attribute_set = self._safe_call(getattr(source, "getAttributes", None))
-        if not isinstance(attribute_set, Sequence):
-            return ""
-
+        attribute_set = self._read_attributes(source)
         prefix = f"{name}:"
         for attribute in attribute_set:
             if isinstance(attribute, str) and attribute.startswith(prefix):
                 return attribute.removeprefix(prefix).strip()
 
         return ""
+
+    def _read_attributes(self, source: Any) -> tuple[str, ...]:
+        attribute_set = self._safe_call(getattr(source, "getAttributes", None))
+        if not isinstance(attribute_set, Sequence):
+            return ()
+        return tuple(attribute for attribute in attribute_set if isinstance(attribute, str))
+
+    def _read_active_descendant(self, event: Any) -> Any | None:
+        descendant = getattr(event, "any_data", None)
+        if descendant is not None and (
+            self._read_text_attribute(descendant, "name") or self._read_role(descendant)
+        ):
+            return descendant
+
+        source = getattr(event, "source", None)
+        selection = self._query_interface(source, "querySelection")
+        selected_count = getattr(selection, "nSelectedChildren", 0)
+        get_selected_child = getattr(selection, "getSelectedChild", None)
+        if isinstance(selected_count, int) and selected_count > 0 and callable(get_selected_child):
+            return self._safe_call(get_selected_child, 0)
+        return None
 
     def _read_shortcut(self, source: Any) -> str:
         action_interface = self._query_interface(source, "queryAction")
@@ -797,6 +820,12 @@ class AtSpiAccessibilityBackend:
 
         state_names = set(self._read_named_states(state_set))
         state_names.update(self._read_pyatspi_states(state_set))
+        if (
+            "enabled" not in state_names
+            and "sensitive" not in state_names
+            and {"focusable", "showing", "visible"}.intersection(state_names)
+        ):
+            state_names.add("disabled")
         return frozenset(state_names)
 
     def _read_named_states(self, state_set: Any) -> tuple[str, ...]:

@@ -13,6 +13,7 @@ class AccessibleNode:
     text: str = ""
     placeholder: str = ""
     shortcut: str = ""
+    attributes: tuple[str, ...] = ()
     state: frozenset[str] = frozenset()
     child_count: int = 0
     children: tuple[AccessibleNode, ...] = ()

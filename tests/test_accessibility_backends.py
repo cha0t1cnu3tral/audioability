@@ -326,6 +326,7 @@ def test_atspi_backend_reads_richer_accessible_properties_and_children() -> None
             text="Volume",
             placeholder="Set volume",
             shortcut="Alt+V",
+            attributes=("placeholder-text:Set volume",),
             state=frozenset({"enabled", "focusable", "focused"}),
             child_count=1,
             children=(
@@ -403,6 +404,35 @@ def test_atspi_backend_reports_inserted_text() -> None:
     )
 
     assert inserted == ["x"]
+
+
+def test_atspi_backend_reports_active_tree_descendant() -> None:
+    nodes: list[AccessibleNode] = []
+    backend = AtSpiAccessibilityBackend(on_focus=nodes.append)
+    row = SimpleNamespace(
+        name="Bravo",
+        description="",
+        getRoleName=lambda: "table cell",
+        getAttributes=lambda: ["level:2", "posinset:2", "setsize:3"],
+    )
+    tree = SimpleNamespace(name="Projects", description="", getRoleName=lambda: "table")
+
+    backend._handle_event(
+        SimpleNamespace(
+            type="object:active-descendant-changed",
+            source=tree,
+            any_data=row,
+            detail1=0,
+        )
+    )
+
+    assert nodes == [
+        AccessibleNode(
+            name="Bravo",
+            role="table cell",
+            attributes=("level:2", "posinset:2", "setsize:3"),
+        )
+    ]
 
 
 def test_atspi_backend_masks_inserted_password_text() -> None:
