@@ -24,6 +24,7 @@ def test_speech_dispatcher_uses_configured_output_settings(
     monkeypatch.setattr(shutil, "which", lambda executable: "/usr/bin/spd-say")
     monkeypatch.setattr(subprocess, "run", fake_run)
     driver = SpeechDispatcherDriver()
+    driver._client_checked = True
     driver.configure(
         SpeechConfiguration(
             rate=1.5,
@@ -69,6 +70,7 @@ def test_speech_dispatcher_maps_setting_limits_and_cancels_output(
     monkeypatch.setattr(shutil, "which", lambda executable: "/usr/bin/spd-say")
     monkeypatch.setattr(subprocess, "run", fake_run)
     driver = SpeechDispatcherDriver()
+    driver._client_checked = True
     driver.configure(SpeechConfiguration(rate=0.5, volume=0.0))
 
     driver.speak("Quiet and slow")
@@ -95,7 +97,9 @@ def test_speech_dispatcher_falls_back_when_process_cannot_start(
     monkeypatch.setattr(shutil, "which", lambda executable: "/usr/bin/spd-say")
     monkeypatch.setattr(subprocess, "run", fail_to_run)
 
-    SpeechDispatcherDriver().speak("Fallback message")
+    driver = SpeechDispatcherDriver()
+    driver._client_checked = True
+    driver.speak("Fallback message")
 
     assert capsys.readouterr().out == "[speech fallback] Fallback message\n"
 
@@ -116,7 +120,59 @@ def test_speech_dispatcher_uses_native_client_for_pause_resume() -> None:
 
     assert driver.pause() is True
     assert driver.resume() is True
-    assert calls == [("pause", "all"), ("resume", "all")]
+    assert calls == [("pause", "self"), ("resume", "self")]
+
+
+def test_speech_dispatcher_uses_one_native_client_for_speech_and_cancel() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class Client:
+        def set_rate(self, value: int) -> None:
+            calls.append(("rate", value))
+
+        def set_volume(self, value: int) -> None:
+            calls.append(("volume", value))
+
+        def set_language(self, value: str) -> None:
+            calls.append(("language", value))
+
+        def set_synthesis_voice(self, value: str) -> None:
+            calls.append(("voice", value))
+
+        def set_punctuation(self, value: str) -> None:
+            calls.append(("punctuation", value))
+
+        def speak(self, text: str) -> None:
+            calls.append(("speak", text))
+
+        def cancel(self, scope: str) -> None:
+            calls.append(("cancel", scope))
+
+    driver = SpeechDispatcherDriver()
+    driver._client = Client()
+    driver._client_checked = True
+    driver.configure(
+        SpeechConfiguration(
+            rate=1.5,
+            volume=0.75,
+            voice="English+Ava",
+            language="en-GB",
+            punctuation="all",
+        )
+    )
+
+    driver.speak("Hello")
+    driver.stop()
+
+    assert calls == [
+        ("rate", 50),
+        ("volume", 50),
+        ("language", "en-GB"),
+        ("voice", "English+Ava"),
+        ("punctuation", "all"),
+        ("speak", "Hello"),
+        ("cancel", "self"),
+    ]
 
 
 def test_speech_dispatcher_lists_all_native_synthesis_voices() -> None:

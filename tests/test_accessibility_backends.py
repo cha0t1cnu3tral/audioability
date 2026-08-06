@@ -60,6 +60,7 @@ def test_atspi_backend_prefers_global_device_signals(monkeypatch: MonkeyPatch) -
     class FakeDevice:
         def __init__(self) -> None:
             self.callbacks: dict[str, object] = {}
+            self.grab_callbacks: list[object] = []
             self.grabs: list[tuple[int, int]] = []
             self.mapped: dict[int, int] = {}
             self.disconnected: list[int] = []
@@ -76,7 +77,8 @@ def test_atspi_backend_prefers_global_device_signals(monkeypatch: MonkeyPatch) -
             return self.mapped[keysym]
 
         def add_key_grab(self, definition: FakeKeyDefinition, callback: object) -> int:
-            assert callback is None
+            assert callable(callback)
+            self.grab_callbacks.append(callback)
             self.grabs.append((definition.keysym, definition.modifiers))
             return len(self.grabs)
 
@@ -149,6 +151,7 @@ def test_atspi_backend_prefers_global_device_signals(monkeypatch: MonkeyPatch) -
     assert (0xFFB2, capslock_mask) in device.grabs
     assert (0xFFE3, 0) not in device.grabs
     initial_grab_count = len(device.grabs)
+    assert len(device.grab_callbacks) == initial_grab_count
 
     pressed = device.callbacks["key-pressed"]
     released = device.callbacks["key-released"]
@@ -156,6 +159,9 @@ def test_atspi_backend_prefers_global_device_signals(monkeypatch: MonkeyPatch) -
     assert callable(released)
     pressed(device, 66, 0xFFE5, 0, "")
     pressed(device, 23, 0xFF09, capslock_mask, "")
+    grab_callback = device.grab_callbacks[device.grabs.index((0xFF09, capslock_mask))]
+    assert callable(grab_callback)
+    assert grab_callback(device, 23, 0xFF09, capslock_mask, "") is True
     released(device, 66, 0xFFE5, 0, "")
 
     assert key_events == [

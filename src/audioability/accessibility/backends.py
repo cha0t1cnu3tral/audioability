@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from typing import Any, Protocol
@@ -110,6 +111,9 @@ class AtSpiAccessibilityBackend:
         self._key_grabs_suspended = False
         self._mapped_reader_keysyms: list[int] = []
         self._reader_modifier_masks: dict[int, str] = {}
+        self._last_device_event: tuple[bool, int, int, int, str] | None = None
+        self._last_device_event_at = 0.0
+        self._last_device_event_handled = False
 
     def start(self) -> None:
         try:
@@ -202,11 +206,20 @@ class AtSpiAccessibilityBackend:
         modifiers: int,
         text: str,
     ) -> bool:
+        signature = (pressed, _keycode, keysym, modifiers, text)
+        now = time.monotonic()
+        if signature == self._last_device_event and now - self._last_device_event_at < 0.01:
+            return self._last_device_event_handled
+
         key = key_from_keysym(keysym, text)
         if not key:
             return False
 
-        return self._handle_key_transition(key, pressed=pressed, modifier_mask=modifiers)
+        handled = self._handle_key_transition(key, pressed=pressed, modifier_mask=modifiers)
+        self._last_device_event = signature
+        self._last_device_event_at = now
+        self._last_device_event_handled = handled
+        return handled
 
     def _handle_device_key_pressed(
         self,
@@ -227,6 +240,18 @@ class AtSpiAccessibilityBackend:
         text: str,
     ) -> None:
         self._handle_device_key_event(_device, False, _keycode, keysym, modifiers, text)
+
+    def _handle_grabbed_key_event(
+        self,
+        device: Any,
+        keycode: int,
+        keysym: int,
+        modifiers: int,
+        text: str,
+    ) -> bool:
+        return self._handle_device_key_event(
+            device, True, keycode, keysym, modifiers, text
+        )
 
     def _handle_key_transition(
         self,
@@ -368,7 +393,7 @@ class AtSpiAccessibilityBackend:
                         definition = key_definition_type()
                         definition.keysym = keysym
                         definition.modifiers = modifier
-                        grab_id = add_key_grab(definition, None)
+                        grab_id = add_key_grab(definition, self._handle_grabbed_key_event)
                     except Exception:
                         continue
                     registered.add(registration)

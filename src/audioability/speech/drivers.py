@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 
 class SpeechDriver(Protocol):
@@ -58,6 +61,16 @@ class SpeechDispatcherDriver:
         self.configuration = configuration
 
     def speak(self, text: str) -> None:
+        client = self._get_client()
+        if client is not None:
+            try:
+                self._configure_client(client)
+                client.speak(text)
+            except Exception:
+                logger.exception("native_speech_dispatch_failed text=%r", text)
+            else:
+                return
+
         resolved_executable = shutil.which(self.executable)
         if resolved_executable is not None:
             command = [
@@ -80,6 +93,15 @@ class SpeechDispatcherDriver:
         print(f"[speech fallback] {text}")
 
     def stop(self) -> None:
+        client = self._get_client()
+        if client is not None:
+            try:
+                client.cancel("self")
+            except Exception:
+                logger.exception("native_speech_cancel_failed")
+            else:
+                return
+
         resolved_executable = shutil.which(self.executable)
         if resolved_executable is not None:
             self._run([resolved_executable, "--cancel"])
@@ -89,7 +111,7 @@ class SpeechDispatcherDriver:
         if client is None:
             return False
         try:
-            client.pause("all")
+            client.pause("self")
         except Exception:
             return False
         return True
@@ -99,7 +121,7 @@ class SpeechDispatcherDriver:
         if client is None:
             return False
         try:
-            client.resume("all")
+            client.resume("self")
         except Exception:
             return False
         return True
@@ -161,6 +183,15 @@ class SpeechDispatcherDriver:
             self._client = None
         return self._client
 
+    def _configure_client(self, client: Any) -> None:
+        client.set_rate(self._rate_argument())
+        client.set_volume(self._volume_argument())
+        if self.configuration.language != "default":
+            client.set_language(self.configuration.language)
+        if self.configuration.voice != "default":
+            client.set_synthesis_voice(self.configuration.voice)
+        client.set_punctuation(self.configuration.punctuation)
+
     def _rate_argument(self) -> int:
         rate = self._clamp(self.configuration.rate, 0.5, 2.0)
         multiplier = 200 if rate < 1.0 else 100
@@ -173,11 +204,11 @@ class SpeechDispatcherDriver:
     @staticmethod
     def _run(command: list[str]) -> bool:
         try:
-            subprocess.run(command, check=False)
+            result = subprocess.run(command, check=False)
         except OSError:
             return False
 
-        return True
+        return result.returncode == 0
 
     @staticmethod
     def _clamp(value: float, minimum: float, maximum: float) -> float:
