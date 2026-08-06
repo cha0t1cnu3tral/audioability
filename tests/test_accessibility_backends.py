@@ -58,6 +58,7 @@ def test_atspi_backend_device_listener_supports_global_signals(
     legacy_registrations: list[dict[str, object]] = []
 
     class FakeKeyDefinition:
+        keycode = 0
         keysym = 0
         modifiers = 0
 
@@ -66,6 +67,7 @@ def test_atspi_backend_device_listener_supports_global_signals(
             self.callbacks: dict[str, object] = {}
             self.grab_callbacks: list[object] = []
             self.grabs: list[tuple[int, int]] = []
+            self.grab_keycodes: list[int] = []
             self.mapped: dict[int, int] = {}
             self.disconnected: list[int] = []
             self.removed_grabs: list[int] = []
@@ -84,6 +86,7 @@ def test_atspi_backend_device_listener_supports_global_signals(
             assert callable(callback)
             self.grab_callbacks.append(callback)
             self.grabs.append((definition.keysym, definition.modifiers))
+            self.grab_keycodes.append(definition.keycode)
             return len(self.grabs)
 
         def remove_key_grab(self, grab_id: int) -> None:
@@ -143,6 +146,7 @@ def test_atspi_backend_device_listener_supports_global_signals(
         return True
 
     backend = AtSpiAccessibilityBackend(on_key=on_key)
+    monkeypatch.setattr(backend, "_keycodes_for_keysym", lambda keysym: (keysym & 0xFF,))
 
     assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is True
 
@@ -160,6 +164,10 @@ def test_atspi_backend_device_listener_supports_global_signals(
     assert (ord("h"), 1) in device.grabs
     assert (0xFFE5, 0) in device.grabs
     assert (0xFF63, 0) in device.grabs
+    down_index = device.grabs.index((0xFF54, 0))
+    assert device.grab_keycodes[down_index] == 0x54
+    capslock_index = device.grabs.index((0xFFE5, capslock_mask))
+    assert device.grab_keycodes[capslock_index] == 0xE5
     initial_grab_count = len(device.grabs)
     assert len(device.grab_callbacks) == initial_grab_count
 
@@ -245,6 +253,22 @@ def test_atspi_backend_clears_stale_modifiers_before_reader_shortcut() -> None:
     backend._handle_device_key_pressed(None, 10, ord("1"), 2, "1")
 
     assert key_events == [("capslock", ()), ("1", ("capslock",))]
+
+
+def test_atspi_backend_clears_stale_reader_modifier_from_current_mask() -> None:
+    key_events: list[tuple[str, tuple[str, ...]]] = []
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        key_events.append((key, modifiers))
+        return True
+
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
+    backend._reader_modifier_masks[1 << 12] = "capslock"
+    backend._pressed_modifiers.add("capslock")
+
+    backend._handle_device_key_pressed(None, 53, ord("x"), 0, "x")
+
+    assert key_events == [("x", ())]
 
 
 def test_atspi_backend_captures_and_releases_keyboard_for_modal_input() -> None:

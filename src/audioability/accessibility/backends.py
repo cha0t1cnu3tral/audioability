@@ -120,6 +120,7 @@ class AtSpiAccessibilityBackend:
         self._key_grabs_suspended = False
         self._mapped_reader_keysyms: list[int] = []
         self._reader_modifier_masks: dict[int, str] = {}
+        self._reader_modifier_by_keysym: dict[int, int] = {}
         self._keyboard_captured = False
         self._last_device_event: tuple[bool, int, int, int, str] | None = None
         self._last_device_event_at = 0.0
@@ -274,9 +275,12 @@ class AtSpiAccessibilityBackend:
         normalized_key = normalize_key(key)
         if pressed and modifier_mask is not None:
             reported_modifiers = self._modifier_names_from_mask(modifier_mask)
-            self._pressed_modifiers.difference_update(self._standard_modifier_names)
+            tracked_modifiers = self._standard_modifier_names | frozenset(
+                self._reader_modifier_masks.values()
+            )
+            self._pressed_modifiers.difference_update(tracked_modifiers)
             self._pressed_modifiers.update(
-                reported_modifiers.intersection(self._standard_modifier_names)
+                reported_modifiers.intersection(tracked_modifiers)
             )
         logger.debug(
             "key_transition key=%r pressed=%s modifier_mask=%s pressed_modifiers=%r",
@@ -431,31 +435,48 @@ class AtSpiAccessibilityBackend:
                     continue
                 self._mapped_reader_keysyms.append(keysym)
                 self._reader_modifier_masks[modifier] = name
+                self._reader_modifier_by_keysym[keysym] = modifier
 
         reader_modifiers = tuple(self._reader_modifier_masks)
 
-        registered: set[tuple[int, int]] = set()
+        registered: set[tuple[int, int, int]] = set()
         for gesture in self._grab_gestures():
             key = gesture[-1]
             modifier_names = gesture[:-1]
             base_modifier = self._standard_modifier_mask(atspi, modifier_names)
-            modifiers = reader_modifiers if "sr" in modifier_names else [0]
-            for reader_modifier in modifiers:
-                modifier = base_modifier | reader_modifier
-                for keysym in self._keysyms_for_grab(key):
-                    registration = (keysym, modifier)
-                    if registration in registered:
-                        continue
-                    try:
-                        definition = key_definition_type()
-                        definition.keysym = keysym
-                        definition.modifiers = modifier
-                        grab_id = add_key_grab(definition, self._handle_device_key_event)
-                    except Exception:
-                        continue
-                    registered.add(registration)
-                    if isinstance(grab_id, int) and grab_id != 0:
-                        self._key_grab_ids.append(grab_id)
+            for keysym in self._keysyms_for_grab(key):
+                if "sr" in modifier_names:
+                    modifiers = reader_modifiers
+                elif key in {"capslock", "insert"}:
+                    own_modifier = self._reader_modifier_by_keysym.get(keysym, 0)
+                    modifiers = (0, own_modifier) if own_modifier else (0,)
+                else:
+                    modifiers = (0,)
+
+                # DeviceLegacy compares incoming grabs by hardware keycode,
+                # even when the grab was specified with a keysym. Supplying
+                # both fields keeps grabs consumable on the legacy backend
+                # while retaining keysym-based grabs for modern compositors.
+                keycodes = self._keycodes_for_keysym(keysym) or (0,)
+                for reader_modifier in modifiers:
+                    modifier = base_modifier | reader_modifier
+                    for keycode in keycodes:
+                        registration = (keycode, keysym, modifier)
+                        if registration in registered:
+                            continue
+                        try:
+                            definition = key_definition_type()
+                            definition.keycode = keycode
+                            definition.keysym = keysym
+                            definition.modifiers = modifier
+                            grab_id = add_key_grab(
+                                definition, self._handle_device_key_event
+                            )
+                        except Exception:
+                            continue
+                        registered.add(registration)
+                        if isinstance(grab_id, int) and grab_id != 0:
+                            self._key_grab_ids.append(grab_id)
 
     def _remove_device_key_grabs(self, device: Any) -> None:
         remove_key_grab = getattr(device, "remove_key_grab", None)
@@ -508,6 +529,7 @@ class AtSpiAccessibilityBackend:
         self._key_grabs_suspended = False
         self._mapped_reader_keysyms.clear()
         self._reader_modifier_masks.clear()
+        self._reader_modifier_by_keysym.clear()
 
     def _modifier_names_from_mask(self, mask: int) -> set[str]:
         names = {
@@ -548,6 +570,38 @@ class AtSpiAccessibilityBackend:
             ("insert", 0xFF63),
             ("insert", 0xFF9E),
             ("insert", 0xFFB0),
+        )
+
+    @staticmethod
+    def _keycodes_for_keysym(keysym: int) -> tuple[int, ...]:
+        """Resolve the hardware keycodes needed by AT-SPI's legacy device."""
+
+        try:
+            import gi  # type: ignore[import-not-found, import-untyped, unused-ignore]
+
+            gi.require_version("Gdk", "3.0")
+            from gi.repository import (  # type: ignore[import-not-found, unused-ignore]
+                Gdk,
+            )
+
+            keymap = Gdk.Keymap.get_default()
+            if keymap is None:
+                return ()
+            found, entries = keymap.get_entries_for_keyval(keysym)
+        except Exception:
+            return ()
+
+        if not found:
+            return ()
+        return tuple(
+            sorted(
+                {
+                    keycode
+                    for entry in entries
+                    if isinstance((keycode := getattr(entry, "keycode", None)), int)
+                    and keycode > 0
+                }
+            )
         )
 
     @staticmethod
