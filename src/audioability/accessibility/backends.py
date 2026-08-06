@@ -10,9 +10,7 @@ from audioability.accessibility.filtering import FocusEventFilter
 from audioability.accessibility.models import AccessibleNode, CaretNavigation
 from audioability.input.commands import (
     DEFAULT_COMMAND_BINDINGS,
-    command_for_gesture,
     is_modifier_key,
-    is_screen_reader_modifier,
     key_from_keysym,
     keysym_for_key,
     normalize_key,
@@ -109,6 +107,7 @@ class AtSpiAccessibilityBackend:
         max_tree_depth: int = 6,
         max_children_per_node: int = 200,
         max_ancestor_depth: int = 24,
+        max_nodes_per_tree: int = 2_000,
     ) -> None:
         self.event_types = tuple(event_types)
         self.on_focus = on_focus
@@ -122,6 +121,7 @@ class AtSpiAccessibilityBackend:
         self.max_tree_depth = max_tree_depth
         self.max_children_per_node = max_children_per_node
         self.max_ancestor_depth = max_ancestor_depth
+        self.max_nodes_per_tree = max_nodes_per_tree
         self._pressed_modifiers: set[str] = set()
         self._keyboard_atspi: Any | None = None
         self._keyboard_device: Any | None = None
@@ -135,8 +135,13 @@ class AtSpiAccessibilityBackend:
         self._reader_modifier_by_keysym: dict[int, int] = {}
         self._keyboard_captured = False
         self._browse_mode_active = True
-        self._legacy_hybrid_listener = False
         self._device_grab_refresh_pending = False
+        self._key_callback_depth = 0
+        self._stop_pending = False
+        self._key_grab_suspend_pending = False
+        self._key_grab_resume_pending = False
+        self._keyboard_capture_pending = False
+        self._pending_keyboard_capture: bool | None = None
         self._last_caret_gesture: tuple[str, tuple[str, ...], float] | None = None
         self._last_device_event: tuple[bool, int, int, int, str] | None = None
         self._last_device_event_at = 0.0
@@ -155,9 +160,7 @@ class AtSpiAccessibilityBackend:
             pyatspi.Registry.registerEventListener(self._handle_event, event_type)
 
         using_device_listener = self.on_key is not None and self._start_device_key_listener(pyatspi)
-        using_registry_listener = self.on_key is not None and (
-            not using_device_listener or self._legacy_hybrid_listener
-        )
+        using_registry_listener = self.on_key is not None and not using_device_listener
         if using_registry_listener:
             pyatspi.Registry.registerKeystrokeListener(
                 self._handle_key_event,
@@ -165,15 +168,11 @@ class AtSpiAccessibilityBackend:
                 kind=(pyatspi.KEY_PRESSED_EVENT, pyatspi.KEY_RELEASED_EVENT),
                 synchronous=True,
                 preemptive=True,
-                global_=not using_device_listener,
+                global_=True,
             )
 
         keyboard_listener = (
-            "device+registry"
-            if using_device_listener and using_registry_listener
-            else "device"
-            if using_device_listener
-            else "registry"
+            "device" if using_device_listener else "registry"
         )
         logger.info(
             "atspi_start event_types=%r keyboard_listener=%s",
@@ -183,6 +182,22 @@ class AtSpiAccessibilityBackend:
         pyatspi.Registry.start()
 
     def stop(self) -> None:
+        if self._key_callback_depth:
+            if not self._stop_pending:
+                self._stop_pending = True
+                if not self._schedule_idle(self._finish_deferred_stop):
+                    self._stop_pending = False
+                    logger.error("atspi_stop_defer_failed")
+            return
+
+        self._stop_now()
+
+    def _finish_deferred_stop(self) -> bool:
+        self._stop_pending = False
+        self._stop_now()
+        return False
+
+    def _stop_now(self) -> None:
         logger.info("atspi_stop")
         self._stop_device_key_listener()
         try:
@@ -193,6 +208,15 @@ class AtSpiAccessibilityBackend:
         pyatspi.Registry.stop()
 
     def _handle_event(self, event: Any) -> None:
+        try:
+            self._dispatch_accessibility_event(event)
+        except Exception:
+            logger.exception(
+                "atspi_event_callback_error type=%r",
+                getattr(event, "type", None),
+            )
+
+    def _dispatch_accessibility_event(self, event: Any) -> None:
         event_type = str(getattr(event, "type", ""))
         if "text-caret-moved" in event_type:
             self._handle_caret_move(event)
@@ -211,7 +235,11 @@ class AtSpiAccessibilityBackend:
         source = getattr(event, "source", None)
         if "active-descendant-changed" in event_type:
             source = self._read_active_descendant(event) or source
-        node = self._read_node(source, depth=self.max_tree_depth)
+        node = self._read_node(
+            source,
+            depth=min(self.max_tree_depth, 2),
+            node_budget=[self.max_nodes_per_tree],
+        )
         logger.debug(
             "atspi_event type=%r name=%r role=%r state=%r",
             getattr(event, "type", None),
@@ -232,24 +260,30 @@ class AtSpiAccessibilityBackend:
             self.on_focus(node)
 
     def _handle_key_event(self, event: Any) -> bool:
-        event_text = self._read_key_event_string(event)
-        event_keysym = getattr(event, "id", 0)
-        key = (
-            key_from_keysym(event_keysym, event_text)
-            if isinstance(event_keysym, int)
-            else event_text
-        )
-        if not key:
-            return False
+        self._key_callback_depth += 1
+        try:
+            event_text = self._read_key_event_string(event)
+            event_keysym = getattr(event, "id", 0)
+            key = (
+                key_from_keysym(event_keysym, event_text)
+                if isinstance(event_keysym, int)
+                else event_text
+            )
+            if not key:
+                return False
 
-        modifiers = getattr(event, "modifiers", None)
-        modifier_mask = modifiers if isinstance(modifiers, int) else None
-        return self._handle_key_transition(
-            key,
-            pressed=not self._is_key_release_event(event),
-            modifier_mask=modifier_mask,
-            event_source="registry",
-        )
+            modifiers = getattr(event, "modifiers", None)
+            modifier_mask = modifiers if isinstance(modifiers, int) else None
+            return self._handle_key_transition(
+                key,
+                pressed=not self._is_key_release_event(event),
+                modifier_mask=modifier_mask,
+            )
+        except Exception:
+            logger.exception("atspi_registry_key_callback_error")
+            return False
+        finally:
+            self._key_callback_depth -= 1
 
     def _handle_device_key_event(
         self,
@@ -260,29 +294,40 @@ class AtSpiAccessibilityBackend:
         modifiers: int,
         text: str,
     ) -> bool:
-        signature = (pressed, _keycode, keysym, modifiers, text)
-        now = time.monotonic()
-        if (
-            signature == self._last_device_event
-            and now - self._last_device_event_at
-            < self._duplicate_device_event_window_seconds
-        ):
-            return self._last_device_event_handled
+        self._key_callback_depth += 1
+        try:
+            signature = (pressed, _keycode, keysym, modifiers, text)
+            now = time.monotonic()
+            if (
+                signature == self._last_device_event
+                and now - self._last_device_event_at
+                < self._duplicate_device_event_window_seconds
+            ):
+                return self._last_device_event_handled
 
-        key = key_from_keysym(keysym, text)
-        if not key:
+            key = key_from_keysym(keysym, text)
+            if not key:
+                return False
+
+            handled = self._handle_key_transition(
+                key,
+                pressed=pressed,
+                modifier_mask=modifiers,
+            )
+            self._last_device_event = signature
+            self._last_device_event_at = now
+            self._last_device_event_handled = handled
+            return handled
+        except Exception:
+            logger.exception(
+                "atspi_device_key_callback_error pressed=%s keycode=%s keysym=%s",
+                pressed,
+                _keycode,
+                keysym,
+            )
             return False
-
-        handled = self._handle_key_transition(
-            key,
-            pressed=pressed,
-            modifier_mask=modifiers,
-            event_source="device",
-        )
-        self._last_device_event = signature
-        self._last_device_event_at = now
-        self._last_device_event_handled = handled
-        return handled
+        finally:
+            self._key_callback_depth -= 1
 
     def _handle_device_key_pressed(
         self,
@@ -310,7 +355,6 @@ class AtSpiAccessibilityBackend:
         *,
         pressed: bool,
         modifier_mask: int | None = None,
-        event_source: str = "direct",
     ) -> bool:
         normalized_key = normalize_key(key)
         if pressed and modifier_mask is not None:
@@ -333,7 +377,7 @@ class AtSpiAccessibilityBackend:
             handled = False
             if normalized_key in self._deferred_modifier_keys:
                 handled = self._dispatch_key_event(
-                    key, modifier_mask or 0, event_source=event_source
+                    key, modifier_mask or 0
                 )
                 self._deferred_modifier_keys.discard(normalized_key)
             self._pressed_modifiers.discard(normalized_key)
@@ -348,13 +392,11 @@ class AtSpiAccessibilityBackend:
             self._deferred_modifier_keys.clear()
 
         grabs_were_suspended = self._key_grabs_suspended
-        handled = self._dispatch_key_event(
-            key, modifier_mask or 0, event_source=event_source
-        )
+        handled = self._dispatch_key_event(key, modifier_mask or 0)
         if self._tracks_as_modifier(key):
             self._pressed_modifiers.add(normalize_key(key))
         elif grabs_were_suspended:
-            self._resume_device_key_grabs()
+            self._schedule_device_key_grab_resume()
 
         return handled
 
@@ -362,8 +404,6 @@ class AtSpiAccessibilityBackend:
         self,
         key: str,
         modifier_mask: int = 0,
-        *,
-        event_source: str = "direct",
     ) -> bool:
         if self.on_key is None:
             return False
@@ -384,39 +424,7 @@ class AtSpiAccessibilityBackend:
         elif not is_modifier_key(key):
             self._last_caret_gesture = None
 
-        if self._legacy_hybrid_listener:
-            global_gesture = self._is_global_gesture(
-                normalized_key, normalized_modifiers
-            )
-            if event_source == "device" and not global_gesture:
-                return False
-            if (
-                event_source == "registry"
-                and global_gesture
-                and not self._key_grabs_suspended
-            ):
-                return False
         return self.on_key(key, normalized_modifiers)
-
-    @staticmethod
-    def _is_global_gesture(key: str, modifiers: tuple[str, ...]) -> bool:
-        if command_for_gesture((*modifiers, key)) is not None:
-            return True
-        return any(is_screen_reader_modifier(modifier) for modifier in modifiers) and key in {
-            "left",
-            "right",
-            "up",
-            "down",
-            "numpad8",
-            "numpad4",
-            "numpad5",
-            "numpad6",
-            "numpad2",
-            "numpad9",
-            "numpad3",
-            "numpadminus",
-            "numpadenter",
-        }
 
     def set_browse_mode(self, active: bool) -> None:
         """Switch between browse grabs and pass-through focus-mode input."""
@@ -428,7 +436,6 @@ class AtSpiAccessibilityBackend:
             self._keyboard_atspi is not None
             and self._keyboard_device is not None
             and not self._key_grabs_suspended
-            and not self._legacy_hybrid_listener
             and not self._device_grab_refresh_pending
         ):
             self._device_grab_refresh_pending = True
@@ -444,14 +451,18 @@ class AtSpiAccessibilityBackend:
     def _schedule_device_key_grab_refresh(self) -> bool:
         """Apply a grab profile after the current AT-SPI callback returns."""
 
+        return self._schedule_idle(self._apply_device_key_grab_profile)
+
+    @staticmethod
+    def _schedule_idle(callback: Callable[[], bool]) -> bool:
         try:
             from gi.repository import (  # type: ignore[import-not-found, unused-ignore]
                 GLib,
             )
 
-            source_id = GLib.idle_add(self._apply_device_key_grab_profile)
+            source_id = GLib.idle_add(callback)
         except Exception:
-            logger.exception("browse_key_grab_refresh_schedule_error")
+            logger.exception("atspi_idle_schedule_error callback=%r", callback)
             return False
         return isinstance(source_id, int) and source_id > 0
 
@@ -476,13 +487,52 @@ class AtSpiAccessibilityBackend:
         if device is None or not self._key_grab_ids:
             return
 
-        self._remove_device_key_grabs(device)
         self._key_grabs_suspended = True
+        if self._key_callback_depth:
+            if not self._key_grab_suspend_pending:
+                self._key_grab_suspend_pending = True
+                if not self._schedule_idle(self._finish_deferred_key_grab_suspend):
+                    self._key_grab_suspend_pending = False
+                    self._key_grabs_suspended = False
+                    logger.error("key_grab_suspend_defer_failed")
+            return
+
+        self._remove_device_key_grabs(device)
         logger.info("key_grabs_suspended")
+
+    def _finish_deferred_key_grab_suspend(self) -> bool:
+        self._key_grab_suspend_pending = False
+        device = self._keyboard_device
+        if device is not None and self._key_grabs_suspended:
+            self._remove_device_key_grabs(device)
+            logger.info("key_grabs_suspended")
+        return False
 
     def capture_keyboard(self, active: bool) -> bool:
         """Capture all keys temporarily for modal input help."""
 
+        if self._key_callback_depth:
+            self._pending_keyboard_capture = active
+            if not self._keyboard_capture_pending:
+                self._keyboard_capture_pending = True
+                if not self._schedule_idle(self._apply_pending_keyboard_capture):
+                    self._keyboard_capture_pending = False
+                    self._pending_keyboard_capture = None
+                    logger.error("keyboard_capture_defer_failed active=%s", active)
+                    return False
+            return True
+
+        return self._set_keyboard_capture(active)
+
+    def _apply_pending_keyboard_capture(self) -> bool:
+        self._keyboard_capture_pending = False
+        active = self._pending_keyboard_capture
+        self._pending_keyboard_capture = None
+        if active is not None:
+            self._set_keyboard_capture(active)
+        return False
+
+    def _set_keyboard_capture(self, active: bool) -> bool:
         device = self._keyboard_device
         if device is None:
             return False
@@ -511,10 +561,13 @@ class AtSpiAccessibilityBackend:
         """Use AT-SPI's global X11/Wayland device API when available."""
 
         atspi = getattr(pyatspi, "Atspi", None)
-        self._legacy_hybrid_listener = self._atspi_version(atspi) < (2, 60)
+        # The compositor-backed device API was added in 2.55. Older Device
+        # objects are the legacy controller in disguise; accepting one makes
+        # Registry registration non-global and loses GNOME Wayland shortcuts.
+        if self._atspi_version(atspi) < (2, 55):
+            return False
         device_type = getattr(atspi, "Device", None)
         if device_type is None:
-            self._legacy_hybrid_listener = False
             return False
 
         new_full = getattr(device_type, "new_full", None)
@@ -530,7 +583,6 @@ class AtSpiAccessibilityBackend:
             return False
 
         if device is None or not self._connect_device_key_listener(atspi, device):
-            self._legacy_hybrid_listener = False
             return False
 
         self._keyboard_atspi = atspi
@@ -546,7 +598,7 @@ class AtSpiAccessibilityBackend:
             self._device_key_callback = self._handle_device_key_event
 
         connect = getattr(device, "connect", None)
-        if self._atspi_version(atspi) >= (2, 60) and callable(connect):
+        if callable(connect):
             signal_ids: list[int] = []
             try:
                 signal_ids.append(connect("key-pressed", self._handle_device_key_pressed))
@@ -673,11 +725,28 @@ class AtSpiAccessibilityBackend:
         if self._keyboard_atspi is not None and self._keyboard_device is not None:
             self._register_device_key_grabs(self._keyboard_atspi, self._keyboard_device)
 
+    def _schedule_device_key_grab_resume(self) -> None:
+        if self._key_grab_resume_pending:
+            return
+        self._key_grab_resume_pending = True
+        if not self._schedule_idle(self._finish_deferred_key_grab_resume):
+            self._key_grab_resume_pending = False
+            logger.error("key_grab_resume_defer_failed")
+
+    def _finish_deferred_key_grab_resume(self) -> bool:
+        self._key_grab_resume_pending = False
+        self._resume_device_key_grabs()
+        return False
+
     def _stop_device_key_listener(self) -> None:
         device = self._keyboard_device
         self._keyboard_atspi = None
         self._keyboard_device = None
         self._device_grab_refresh_pending = False
+        self._key_grab_suspend_pending = False
+        self._key_grab_resume_pending = False
+        self._keyboard_capture_pending = False
+        self._pending_keyboard_capture = None
         self._pressed_modifiers.clear()
         if device is None:
             self._key_grabs_suspended = False
@@ -718,7 +787,6 @@ class AtSpiAccessibilityBackend:
         self._mapped_reader_keycodes.clear()
         self._reader_modifier_masks.clear()
         self._reader_modifier_by_keysym.clear()
-        self._legacy_hybrid_listener = False
 
     def _modifier_names_from_mask(self, mask: int) -> set[str]:
         names = {
@@ -795,7 +863,7 @@ class AtSpiAccessibilityBackend:
 
     def _grab_gestures(self) -> tuple[tuple[str, ...], ...]:
         gestures = set(self._global_grab_gestures())
-        if self._legacy_hybrid_listener or not self._browse_mode_active:
+        if not self._browse_mode_active:
             return tuple(sorted(gestures))
 
         browse_keys = (
@@ -969,7 +1037,18 @@ class AtSpiAccessibilityBackend:
     def _tracks_as_modifier(self, key: str) -> bool:
         return is_modifier_key(key)
 
-    def _read_node(self, source: Any, *, depth: int) -> AccessibleNode:
+    def _read_node(
+        self,
+        source: Any,
+        *,
+        depth: int,
+        focus_path: tuple[int, ...] = (),
+        node_budget: list[int] | None = None,
+    ) -> AccessibleNode:
+        if node_budget is not None:
+            if node_budget[0] <= 0:
+                return AccessibleNode(name="", role="")
+            node_budget[0] -= 1
         child_count = self._read_child_count(source)
         return AccessibleNode(
             name=self._read_text_attribute(source, "name"),
@@ -982,7 +1061,13 @@ class AtSpiAccessibilityBackend:
             attributes=self._read_attributes(source),
             state=self._read_state(source),
             child_count=child_count,
-            children=self._read_children(source, child_count, depth=depth),
+            children=self._read_children(
+                source,
+                child_count,
+                depth=depth,
+                focus_path=focus_path,
+                node_budget=node_budget,
+            ),
             activation=self._read_activation(source),
             focus_action=self._read_focus_action(source),
         )
@@ -994,8 +1079,12 @@ class AtSpiAccessibilityBackend:
         fallback_focus: AccessibleNode,
     ) -> tuple[AccessibleNode, AccessibleNode]:
         root_source, focus_path = self._read_root_source_and_focus_path(source)
-        root_depth = max(self.max_tree_depth, len(focus_path) + self.max_tree_depth)
-        root = self._read_node(root_source, depth=root_depth)
+        root = self._read_node(
+            root_source,
+            depth=self.max_tree_depth,
+            focus_path=focus_path,
+            node_budget=[self.max_nodes_per_tree],
+        )
         focused = self._node_at_path(root, focus_path)
         return root, focused or fallback_focus
 
@@ -1346,15 +1435,32 @@ class AtSpiAccessibilityBackend:
         child_count: int,
         *,
         depth: int,
+        focus_path: tuple[int, ...] = (),
+        node_budget: list[int] | None = None,
     ) -> tuple[AccessibleNode, ...]:
-        if depth <= 0 or child_count <= 0:
+        if (depth <= 0 and not focus_path) or child_count <= 0:
             return ()
 
         children: list[AccessibleNode] = []
         for index in range(min(child_count, self.max_children_per_node)):
+            if node_budget is not None and node_budget[0] <= 0:
+                logger.warning("atspi_tree_node_budget_exhausted limit=%d", self.max_nodes_per_tree)
+                break
             child = self._read_child(source, index)
             if child is not None:
-                children.append(self._read_node(child, depth=depth - 1))
+                child_focus_path = (
+                    focus_path[1:]
+                    if focus_path and index == focus_path[0]
+                    else ()
+                )
+                children.append(
+                    self._read_node(
+                        child,
+                        depth=max(depth - 1, 0),
+                        focus_path=child_focus_path,
+                        node_budget=node_budget,
+                    )
+                )
 
         return tuple(children)
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import faulthandler
+from pathlib import Path
+
 import pytest
 
 from audioability import cli
@@ -53,3 +56,29 @@ def test_main_reports_unavailable_accessibility_backend(
 
     assert exc_info.value.code == 1
     assert capsys.readouterr().err == "audioability: Install accessibility packages.\n"
+
+
+def test_main_records_unexpected_failure_in_crash_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class CrashingApplication:
+        def __init__(self, *, dry_run: bool) -> None:
+            self.dry_run = dry_run
+
+        def run(self) -> None:
+            raise RuntimeError("simulated crash")
+
+    crash_log = tmp_path / "crash.log"
+    monkeypatch.setattr(cli, "ScreenReaderApplication", CrashingApplication)
+    monkeypatch.setattr(faulthandler, "is_enabled", lambda: True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--crash-log", str(crash_log)])
+
+    assert exc_info.value.code == 1
+    assert "unexpected failure: simulated crash" in capsys.readouterr().err
+    log_text = crash_log.read_text(encoding="utf-8")
+    assert "RuntimeError: simulated crash" in log_text
+    assert "Audioability process ended" in log_text

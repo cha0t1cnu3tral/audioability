@@ -147,6 +147,17 @@ def test_atspi_backend_device_listener_supports_global_signals(
 
     backend = AtSpiAccessibilityBackend(on_key=on_key)
     monkeypatch.setattr(backend, "_keycodes_for_keysym", lambda keysym: (keysym & 0xFF,))
+    scheduled: list[object] = []
+
+    def schedule_idle(callback: object) -> bool:
+        scheduled.append(callback)
+        return True
+
+    monkeypatch.setattr(
+        backend,
+        "_schedule_idle",
+        schedule_idle,
+    )
 
     assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is True
 
@@ -194,6 +205,10 @@ def test_atspi_backend_device_listener_supports_global_signals(
     pressed(device, 66, 0xFFE5, 0, "")
     pressed(device, 23, 0xFF09, capslock_mask, "")
     released(device, 66, 0xFFE5, 0, "")
+    assert len(scheduled) == 1
+    resume = scheduled.pop()
+    assert callable(resume)
+    assert resume() is False
     assert len(device.grabs) == initial_grab_count * 2
 
     backend.stop()
@@ -211,9 +226,12 @@ def test_atspi_backend_deduplicates_delayed_grab_callback(
     monkeypatch.setattr(
         "audioability.accessibility.backends.time.monotonic", lambda: next(times)
     )
-    backend = AtSpiAccessibilityBackend(
-        on_key=lambda key, modifiers: key_events.append((key, modifiers)) or True
-    )
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        key_events.append((key, modifiers))
+        return True
+
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
 
     assert backend._handle_device_key_event(None, True, 43, ord("h"), 0, "h") is True
     assert backend._handle_device_key_event(None, True, 43, ord("h"), 0, "h") is True
@@ -389,10 +407,15 @@ def test_atspi_backend_defers_live_grab_profile_refresh(
     backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
     backend._keyboard_atspi = object()
     backend._keyboard_device = object()
+
+    def schedule_refresh() -> bool:
+        scheduled.append(backend._apply_device_key_grab_profile)
+        return True
+
     monkeypatch.setattr(
         backend,
         "_schedule_device_key_grab_refresh",
-        lambda: scheduled.append(backend._apply_device_key_grab_profile) or True,
+        schedule_refresh,
     )
     monkeypatch.setattr(
         backend, "_remove_device_key_grabs", lambda device: calls.append("remove")
@@ -421,10 +444,15 @@ def test_atspi_backend_coalesces_pending_grab_profile_refresh(
     backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
     backend._keyboard_atspi = object()
     backend._keyboard_device = object()
+
+    def schedule_refresh() -> bool:
+        scheduled.append(backend._apply_device_key_grab_profile)
+        return True
+
     monkeypatch.setattr(
         backend,
         "_schedule_device_key_grab_refresh",
-        lambda: scheduled.append(backend._apply_device_key_grab_profile) or True,
+        schedule_refresh,
     )
 
     backend.set_browse_mode(False)
@@ -433,7 +461,7 @@ def test_atspi_backend_coalesces_pending_grab_profile_refresh(
     assert len(scheduled) == 1
 
 
-def test_atspi_backend_uses_hybrid_listener_on_pre_260_atspi(
+def test_atspi_backend_rejects_legacy_device_on_pre_255_atspi(
     monkeypatch: MonkeyPatch,
 ) -> None:
     callbacks: list[object] = []
@@ -471,33 +499,131 @@ def test_atspi_backend_uses_hybrid_listener_on_pre_260_atspi(
     )
     backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
 
+    assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is False
+
+    assert callbacks == []
+
+
+def test_atspi_backend_uses_key_watcher_before_signal_api_is_available() -> None:
+    callbacks: list[object] = []
+
+    class FakeDevice:
+        def add_key_watcher(self, callback: object) -> None:
+            callbacks.append(callback)
+
+    device = FakeDevice()
+
+    class FakeDeviceType:
+        @staticmethod
+        def new_full(app_id: str) -> FakeDevice:
+            return device
+
+    fake_atspi = SimpleNamespace(Device=FakeDeviceType, get_version=lambda: (2, 56, 0))
+    backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
+
     assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is True
 
     assert callbacks == [backend._handle_device_key_event]
-    assert backend._legacy_hybrid_listener is True
 
 
-def test_legacy_hybrid_observes_caret_keys_and_dispatches_browse_keys_once() -> None:
+def test_device_watcher_observes_caret_keys_and_dispatches_browse_keys() -> None:
     key_events: list[tuple[str, tuple[str, ...]]] = []
-    backend = AtSpiAccessibilityBackend(
-        on_key=lambda key, modifiers: key_events.append((key, modifiers)) or True
-    )
-    backend._legacy_hybrid_listener = True
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        key_events.append((key, modifiers))
+        return True
+
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
 
     assert backend._handle_key_transition(
-        "h", pressed=True, modifier_mask=0, event_source="device"
-    ) is False
-    assert backend._handle_key_transition(
-        "h", pressed=True, modifier_mask=0, event_source="registry"
+        "h", pressed=True, modifier_mask=0
     ) is True
     backend.set_browse_mode(False)
     assert backend._handle_key_transition(
-        "right", pressed=True, modifier_mask=0, event_source="device"
-    ) is False
+        "right", pressed=True, modifier_mask=0
+    ) is True
 
-    assert key_events == [("h", ())]
+    assert key_events == [("h", ()), ("right", ())]
     assert backend._last_caret_gesture is not None
     assert backend._last_caret_gesture[:2] == ("right", ())
+
+
+def test_atspi_backend_defers_grab_removal_from_device_callback(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    removed: list[int] = []
+    scheduled: list[object] = []
+    backend: AtSpiAccessibilityBackend
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        backend.pass_next_key()
+        return True
+
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
+    backend._keyboard_device = SimpleNamespace(remove_key_grab=removed.append)
+    backend._key_grab_ids = [17]
+
+    def schedule_idle(callback: object) -> bool:
+        scheduled.append(callback)
+        return True
+
+    monkeypatch.setattr(
+        backend,
+        "_schedule_idle",
+        schedule_idle,
+    )
+
+    assert backend._handle_device_key_event(None, True, 43, ord("h"), 0, "h") is True
+
+    assert removed == []
+    assert backend._key_grab_ids == [17]
+    assert len(scheduled) == 1
+    suspend = scheduled.pop()
+    assert callable(suspend)
+    assert suspend() is False
+    assert removed == [17]
+    assert backend._key_grab_ids == []
+
+
+def test_atspi_backend_defers_stop_from_key_callback(monkeypatch: MonkeyPatch) -> None:
+    stopped: list[bool] = []
+    scheduled: list[object] = []
+    backend: AtSpiAccessibilityBackend
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        backend.stop()
+        return True
+
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
+    monkeypatch.setattr(backend, "_stop_now", lambda: stopped.append(True))
+
+    def schedule_idle(callback: object) -> bool:
+        scheduled.append(callback)
+        return True
+
+    monkeypatch.setattr(
+        backend,
+        "_schedule_idle",
+        schedule_idle,
+    )
+
+    assert backend._handle_key_event(SimpleNamespace(event_string="q", type="PRESS")) is True
+
+    assert stopped == []
+    assert len(scheduled) == 1
+    finish_stop = scheduled.pop()
+    assert callable(finish_stop)
+    assert finish_stop() is False
+    assert stopped == [True]
+
+
+def test_atspi_backend_contains_application_callback_errors() -> None:
+    def fail_on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        raise RuntimeError("broken command")
+
+    backend = AtSpiAccessibilityBackend(on_key=fail_on_key)
+
+    assert backend._handle_key_event(SimpleNamespace(event_string="q", type="PRESS")) is False
 
 
 def test_atspi_backend_disconnects_partial_signal_registration(
@@ -904,6 +1030,46 @@ def test_atspi_backend_stops_focus_tree_at_top_level_window() -> None:
     assert root.name == "Editor"
     assert root.role == "frame"
     assert focused.name == "Save"
+
+
+def test_atspi_backend_bounds_large_focus_trees() -> None:
+    focus_events: list[tuple[AccessibleNode, AccessibleNode]] = []
+    focused_source = FakeTreeAccessible(name="Focused", role="button")
+    siblings = tuple(
+        FakeTreeAccessible(name=f"Sibling {index}", role="button")
+        for index in range(50)
+    )
+    FakeTreeAccessible(
+        focused_source,
+        *siblings,
+        name="Large window",
+        role="frame",
+    )
+    backend = AtSpiAccessibilityBackend(
+        on_focus_tree=lambda root, focused: focus_events.append((root, focused)),
+        max_nodes_per_tree=10,
+    )
+
+    backend._handle_event(SimpleNamespace(source=focused_source, detail1=1))
+
+    root, focused = focus_events[0]
+    assert root.name == "Large window"
+    assert focused.name == "Focused"
+    assert len(root.children) == 9
+
+
+def test_atspi_backend_contains_accessibility_proxy_errors() -> None:
+    nodes: list[AccessibleNode] = []
+
+    def fail_to_read_role() -> str:
+        raise RuntimeError("defunct accessible")
+
+    backend = AtSpiAccessibilityBackend(on_focus=nodes.append)
+    source = SimpleNamespace(name="Gone", getRoleName=fail_to_read_role)
+
+    backend._handle_event(SimpleNamespace(source=source, detail1=1))
+
+    assert nodes == []
 
 
 def test_atspi_backend_dispatches_key_events_with_pressed_modifiers() -> None:
