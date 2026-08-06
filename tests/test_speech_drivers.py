@@ -25,7 +25,13 @@ def test_speech_dispatcher_uses_configured_output_settings(
     monkeypatch.setattr(subprocess, "run", fake_run)
     driver = SpeechDispatcherDriver()
     driver.configure(
-        SpeechConfiguration(rate=1.5, volume=0.75, voice="ava", punctuation="all")
+        SpeechConfiguration(
+            rate=1.5,
+            volume=0.75,
+            voice="English+Ava",
+            language="en",
+            punctuation="all",
+        )
     )
 
     driver.speak("Hello")
@@ -40,8 +46,10 @@ def test_speech_dispatcher_uses_configured_output_settings(
                 "50",
                 "--punctuation-mode",
                 "all",
+                "--language",
+                "en",
                 "--synthesis-voice",
-                "ava",
+                "English+Ava",
                 "Hello",
             ],
             False,

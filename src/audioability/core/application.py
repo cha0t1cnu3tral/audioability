@@ -62,7 +62,11 @@ class ScreenReaderApplication:
             if callable(available_voices)
             else (SynthesisVoice("default", "default"),)
         )
-        logger.info("speech_voices_discovered count=%d", len(voices))
+        logger.info(
+            "speech_voices_discovered count=%d languages=%d",
+            len(voices),
+            len({voice.language for voice in voices}),
+        )
         self.speech_controller = SpeechController(self.speech_driver, voices=voices)
         self.current_focus: AccessibleNode | None = None
         self.object_navigator = ObjectNavigator()

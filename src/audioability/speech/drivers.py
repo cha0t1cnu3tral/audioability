@@ -69,10 +69,10 @@ class SpeechDispatcherDriver:
                 "--punctuation-mode",
                 self.configuration.punctuation,
             ]
-            if self.configuration.voice != "default":
-                command.extend(("--synthesis-voice", self.configuration.voice))
             if self.configuration.language != "default":
                 command.extend(("--language", self.configuration.language))
+            if self.configuration.voice != "default":
+                command.extend(("--synthesis-voice", self.configuration.voice))
             command.append(text)
             if self._run(command):
                 return
