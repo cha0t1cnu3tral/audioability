@@ -47,6 +47,11 @@ class AtSpiAccessibilityBackend:
     """AT-SPI backend for Linux desktop accessibility events."""
 
     _application_id = "org.audioability.Audioability"
+    # Some AT-SPI versions report a grabbed key through both the device signal
+    # and the grab callback. Under WSLg those copies can arrive tens of
+    # milliseconds apart, so keep the window wide enough to identify them.
+    # A real second press still follows a release and is therefore not a match.
+    _duplicate_device_event_window_seconds = 0.1
 
     # PyAtspi defaults to mask 0, which only reports keys pressed without a
     # modifier. Register every combination from AT-SPI's eight-bit legacy
@@ -242,7 +247,11 @@ class AtSpiAccessibilityBackend:
     ) -> bool:
         signature = (pressed, _keycode, keysym, modifiers, text)
         now = time.monotonic()
-        if signature == self._last_device_event and now - self._last_device_event_at < 0.01:
+        if (
+            signature == self._last_device_event
+            and now - self._last_device_event_at
+            < self._duplicate_device_event_window_seconds
+        ):
             return self._last_device_event_handled
 
         key = key_from_keysym(keysym, text)

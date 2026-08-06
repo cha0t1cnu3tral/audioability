@@ -203,6 +203,26 @@ def test_atspi_backend_device_listener_supports_global_signals(
     assert device.unmapped == [0xFFE5, 0xFF63, 0xFF9E, 0xFFB0]
 
 
+def test_atspi_backend_deduplicates_delayed_grab_callback(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    key_events: list[tuple[str, tuple[str, ...]]] = []
+    times = iter((100.0, 100.056, 100.060, 100.061))
+    monkeypatch.setattr(
+        "audioability.accessibility.backends.time.monotonic", lambda: next(times)
+    )
+    backend = AtSpiAccessibilityBackend(
+        on_key=lambda key, modifiers: key_events.append((key, modifiers)) or True
+    )
+
+    assert backend._handle_device_key_event(None, True, 43, ord("h"), 0, "h") is True
+    assert backend._handle_device_key_event(None, True, 43, ord("h"), 0, "h") is True
+    assert backend._handle_device_key_event(None, False, 43, ord("h"), 0, "h") is False
+    assert backend._handle_device_key_event(None, True, 43, ord("h"), 0, "h") is True
+
+    assert key_events == [("h", ()), ("h", ())]
+
+
 def test_atspi_backend_only_dispatches_shift_when_used_alone() -> None:
     key_events: list[tuple[str, tuple[str, ...]]] = []
 
