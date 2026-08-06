@@ -32,9 +32,19 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-sleep 2
-if ! kill -0 "$AUDIOABILITY_PID" 2>/dev/null; then
-  echo "Audioability stopped during startup; see $CONSOLE_LOG" >&2
+for _ in $(seq 1 60); do
+  if ! kill -0 "$AUDIOABILITY_PID" 2>/dev/null; then
+    echo "Audioability stopped during startup; see $CONSOLE_LOG" >&2
+    exit 1
+  fi
+  if [[ -f "$DEBUG_LOG" ]] && grep -q "atspi_start" "$DEBUG_LOG"; then
+    break
+  fi
+  sleep 0.5
+done
+
+if ! grep -q "atspi_start" "$DEBUG_LOG"; then
+  echo "Audioability did not become ready in 30 seconds; see $DEBUG_LOG" >&2
   exit 1
 fi
 
