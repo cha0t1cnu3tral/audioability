@@ -456,6 +456,8 @@ class ScreenReaderApplication:
             "right": ObjectNavigationAction.MOVE_TO_NEXT_FLAT,
             "up": ObjectNavigationAction.MOVE_TO_PREVIOUS_FLAT,
             "left": ObjectNavigationAction.MOVE_TO_PREVIOUS_FLAT,
+            "enter": ObjectNavigationAction.ACTIVATE_CURRENT,
+            "space": ObjectNavigationAction.ACTIVATE_CURRENT,
         }.get(key.removeprefix("arrow"))
 
     @staticmethod

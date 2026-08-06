@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
 from audioability.accessibility.models import AccessibleNode
+
+logger = logging.getLogger(__name__)
 
 
 class ObjectNavigationAction(StrEnum):
@@ -197,8 +200,16 @@ class ObjectNavigator:
 
     def _activate_current(self) -> ObjectNavigationResult:
         if self.current is None:
+            logger.debug("object_activation result=no-current")
             return ObjectNavigationResult(False, message="No navigator object")
-        if not self.current.activate():
+        activated = self.current.activate()
+        logger.debug(
+            "object_activation name=%r role=%r result=%s",
+            self.current.name,
+            self.current.role,
+            activated,
+        )
+        if not activated:
             return ObjectNavigationResult(False, message="No action")
 
         return ObjectNavigationResult(True, self.current, "Activate current object")

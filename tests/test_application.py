@@ -360,6 +360,37 @@ def test_browse_mode_arrow_keys_navigate_accessibility_tree() -> None:
     ]
 
 
+def test_browse_mode_enter_and_space_activate_virtual_cursor() -> None:
+    speech = NullSpeechDriver()
+    activations: list[str] = []
+
+    def activate(name: str) -> bool:
+        activations.append(name)
+        return True
+
+    first = AccessibleNode(
+        name="First",
+        role="button",
+        activation=lambda: activate("first"),
+    )
+    second = AccessibleNode(
+        name="Second",
+        role="button",
+        activation=lambda: activate("second"),
+    )
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app._speak_focused_tree(
+        AccessibleNode(name="Window", role="frame", children=(first, second)),
+        first,
+    )
+
+    assert app.handle_key("Enter") is True
+    assert app.handle_key("Down") is True
+    assert app.handle_key("Space") is True
+
+    assert activations == ["first", "second"]
+
+
 def test_browse_mode_single_letter_quick_navigation_and_shift_reverse() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
