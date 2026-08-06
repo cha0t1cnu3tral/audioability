@@ -133,19 +133,20 @@ class AtSpiAccessibilityBackend:
         for event_type in self.event_types:
             pyatspi.Registry.registerEventListener(self._handle_event, event_type)
 
-        using_device_listener = self.on_key is not None and self._start_device_key_listener(pyatspi)
-        if self.on_key is not None and not using_device_listener:
+        if self.on_key is not None:
             pyatspi.Registry.registerKeystrokeListener(
                 self._handle_key_event,
                 mask=self._modifier_masks,
                 kind=(pyatspi.KEY_PRESSED_EVENT, pyatspi.KEY_RELEASED_EVENT),
+                synchronous=True,
+                preemptive=True,
                 global_=True,
             )
 
         logger.info(
             "atspi_start event_types=%r keyboard_listener=%s",
             self.event_types,
-            "device" if using_device_listener else "registry",
+            "registry" if self.on_key is not None else "none",
         )
         pyatspi.Registry.start()
 
@@ -257,18 +258,6 @@ class AtSpiAccessibilityBackend:
         text: str,
     ) -> None:
         self._handle_device_key_event(_device, False, _keycode, keysym, modifiers, text)
-
-    def _handle_grabbed_key_event(
-        self,
-        device: Any,
-        keycode: int,
-        keysym: int,
-        modifiers: int,
-        text: str,
-    ) -> bool:
-        return self._handle_device_key_event(
-            device, True, keycode, keysym, modifiers, text
-        )
 
     def _handle_key_transition(
         self,
@@ -424,7 +413,7 @@ class AtSpiAccessibilityBackend:
                         definition = key_definition_type()
                         definition.keysym = keysym
                         definition.modifiers = modifier
-                        grab_id = add_key_grab(definition, self._handle_grabbed_key_event)
+                        grab_id = add_key_grab(definition, self._handle_device_key_event)
                     except Exception:
                         continue
                     registered.add(registration)

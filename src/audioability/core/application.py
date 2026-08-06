@@ -190,6 +190,9 @@ class ScreenReaderApplication:
                 return self.handle_command(help_command)
             return self.speak_input_help(key, modifiers)
 
+        if is_screen_reader_modifier(key):
+            return True
+
         if self._handle_modifier_shortcut(key, modifiers):
             return True
 

@@ -44,12 +44,16 @@ def test_atspi_backend_fallback_registers_global_keys_for_every_modifier_mask(
         {
             "mask": tuple(range(256)),
             "kind": (1, 2),
+            "synchronous": True,
+            "preemptive": True,
             "global_": True,
         }
     ]
 
 
-def test_atspi_backend_prefers_global_device_signals(monkeypatch: MonkeyPatch) -> None:
+def test_atspi_backend_device_listener_supports_global_signals(
+    monkeypatch: MonkeyPatch,
+) -> None:
     key_events: list[tuple[str, tuple[str, ...]]] = []
     legacy_registrations: list[dict[str, object]] = []
 
@@ -140,7 +144,7 @@ def test_atspi_backend_prefers_global_device_signals(monkeypatch: MonkeyPatch) -
 
     backend = AtSpiAccessibilityBackend(on_key=on_key)
 
-    backend.start()
+    assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is True
 
     assert created_app_ids == ["org.audioability.Audioability"]
     assert legacy_registrations == []
@@ -165,7 +169,7 @@ def test_atspi_backend_prefers_global_device_signals(monkeypatch: MonkeyPatch) -
     pressed(device, 23, 0xFF09, capslock_mask, "")
     grab_callback = device.grab_callbacks[device.grabs.index((0xFF09, capslock_mask))]
     assert callable(grab_callback)
-    assert grab_callback(device, 23, 0xFF09, capslock_mask, "") is True
+    assert grab_callback(device, True, 23, 0xFF09, capslock_mask, "") is True
     released(device, 66, 0xFFE5, 0, "")
 
     assert key_events == [
@@ -235,11 +239,12 @@ def test_atspi_backend_uses_device_watcher_on_pre_260_atspi(
         def start() -> None:
             return None
 
+    fake_atspi = SimpleNamespace(Device=FakeDeviceType, get_version=lambda: (2, 52, 0))
     monkeypatch.setitem(
         sys.modules,
         "pyatspi",
         SimpleNamespace(
-            Atspi=SimpleNamespace(Device=FakeDeviceType, get_version=lambda: (2, 52, 0)),
+            Atspi=fake_atspi,
             Registry=FakeRegistry,
             KEY_PRESSED_EVENT=1,
             KEY_RELEASED_EVENT=2,
@@ -247,7 +252,7 @@ def test_atspi_backend_uses_device_watcher_on_pre_260_atspi(
     )
     backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
 
-    backend.start()
+    assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is True
 
     assert callbacks == [backend._handle_device_key_event]
 
@@ -286,11 +291,12 @@ def test_atspi_backend_disconnects_partial_signal_registration(
         def start() -> None:
             return None
 
+    fake_atspi = SimpleNamespace(Device=FakeDeviceType, get_version=lambda: (2, 60, 0))
     monkeypatch.setitem(
         sys.modules,
         "pyatspi",
         SimpleNamespace(
-            Atspi=SimpleNamespace(Device=FakeDeviceType, get_version=lambda: (2, 60, 0)),
+            Atspi=fake_atspi,
             Registry=FakeRegistry,
             KEY_PRESSED_EVENT=1,
             KEY_RELEASED_EVENT=2,
@@ -298,7 +304,7 @@ def test_atspi_backend_disconnects_partial_signal_registration(
     )
     backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
 
-    backend.start()
+    assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is True
 
     assert disconnected == [41]
     assert watchers == [backend._handle_device_key_event]
