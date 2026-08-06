@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from enum import StrEnum
 
 from audioability.accessibility.backends import (
@@ -8,7 +9,7 @@ from audioability.accessibility.backends import (
     AtSpiAccessibilityBackend,
     NullAccessibilityBackend,
 )
-from audioability.accessibility.models import AccessibleNode
+from audioability.accessibility.models import AccessibleNode, CaretNavigation
 from audioability.accessibility.navigation import ObjectNavigationAction, ObjectNavigator
 from audioability.input.commands import (
     Command,
@@ -119,6 +120,7 @@ class ScreenReaderApplication:
                 on_focus_tree=self._speak_focused_tree,
                 on_key=self.handle_key,
                 on_text_insert=self._speak_typed_text,
+                on_caret_move=self._speak_caret_navigation,
                 on_state_change=self._speak_state_change,
             )
         )
@@ -221,14 +223,10 @@ class ScreenReaderApplication:
 
     def toggle_browse_focus_mode(self) -> bool:
         if self.interaction_mode is InteractionMode.BROWSE:
-            self.interaction_mode = InteractionMode.FOCUS
-            self._focus_mode_auto_entered = False
-            logger.info("interaction_mode_changed mode=%s automatic=false", self.interaction_mode)
+            self._set_interaction_mode(InteractionMode.FOCUS, automatic=False)
             return self._speak_command("Focus mode")
 
-        self.interaction_mode = InteractionMode.BROWSE
-        self._focus_mode_auto_entered = False
-        logger.info("interaction_mode_changed mode=%s automatic=false", self.interaction_mode)
+        self._set_interaction_mode(InteractionMode.BROWSE, automatic=False)
         return self._speak_command("Browse mode")
 
     def quit(self) -> bool:
@@ -242,6 +240,13 @@ class ScreenReaderApplication:
         if command is None:
             normalized_key = normalize_key(key)
             normalized_modifiers = {normalize_key(modifier) for modifier in modifiers}
+            table_description = self._table_navigation_description(
+                normalized_key, normalized_modifiers
+            )
+            if table_description:
+                return self._speak_command(
+                    f"{self._gesture_text(key, modifiers)} {table_description}"
+                )
             label = self._quick_navigation_label(normalized_key)
             if label is not None and normalized_modifiers.issubset({"shift"}):
                 direction = "previous" if "shift" in normalized_modifiers else "next"
@@ -257,6 +262,21 @@ class ScreenReaderApplication:
             return self._speak_command("Unassigned")
 
         return self._speak_command(f"{self._gesture_text(key, modifiers)} {command.description}")
+
+    @staticmethod
+    def _table_navigation_description(key: str, modifiers: set[str]) -> str:
+        if modifiers != {"control", "alt"}:
+            return ""
+        return {
+            "left": "previous table column",
+            "right": "next table column",
+            "up": "previous table row",
+            "down": "next table row",
+            "home": "first table column",
+            "end": "last table column",
+            "pageup": "first table row",
+            "pagedown": "last table row",
+        }.get(key.removeprefix("arrow"), "")
 
     def speak_current_focus(self) -> bool:
         if self.current_focus is None:
@@ -327,6 +347,25 @@ class ScreenReaderApplication:
             return self._speak_command(result.message)
         return result.handled
 
+    def navigate_table(self, key: str) -> bool:
+        result = self.object_navigator.move_table_cell(key)
+        if result.message:
+            return self._speak_command(result.message)
+        if result.node is None or result.table_position is None:
+            return result.handled
+
+        position = result.table_position
+        header = self._unique_detail(position.column_header, result.node.name)
+        location = (
+            f"row {position.row + 1} of {position.row_count} "
+            f"column {position.column + 1} of {position.column_count}"
+        )
+        return self._speak_command(
+            " ".join(
+                filter(None, (self._focused_node_text(result.node), header, location))
+            )
+        )
+
     def handle_modifier_numpad(self, modifier_key: str, numpad_key: str) -> bool:
         if not is_screen_reader_modifier(modifier_key):
             return False
@@ -394,25 +433,30 @@ class ScreenReaderApplication:
 
     def _sync_interaction_mode_for_focus(self, node: AccessibleNode) -> None:
         if self._focus_mode_auto_entered and not self._requires_focus_mode(node):
-            self.interaction_mode = InteractionMode.BROWSE
-            self._focus_mode_auto_entered = False
+            self._set_interaction_mode(InteractionMode.BROWSE, automatic=True)
             return
 
         if self.interaction_mode is InteractionMode.BROWSE and self._requires_focus_mode(node):
-            self.interaction_mode = InteractionMode.FOCUS
-            self._focus_mode_auto_entered = True
+            self._set_interaction_mode(InteractionMode.FOCUS, automatic=True)
 
     def _handle_interaction_mode_key(self, key: str, modifiers: tuple[str, ...]) -> bool:
         normalized_key = normalize_key(key)
         normalized_modifiers = {normalize_key(modifier) for modifier in modifiers}
+        if (
+            self.interaction_mode is InteractionMode.BROWSE
+            and normalized_modifiers == {"control", "alt"}
+            and normalized_key.removeprefix("arrow")
+            in {"left", "right", "up", "down", "home", "end", "pageup", "pagedown"}
+        ):
+            return self.navigate_table(normalized_key)
+
         if (
             self.interaction_mode is InteractionMode.FOCUS
             and self._focus_mode_auto_entered
             and normalized_key == "esc"
             and not normalized_modifiers
         ):
-            self.interaction_mode = InteractionMode.BROWSE
-            self._focus_mode_auto_entered = False
+            self._set_interaction_mode(InteractionMode.BROWSE, automatic=False)
             return self._speak_command("Browse mode")
 
         if self.interaction_mode is InteractionMode.FOCUS:
@@ -435,8 +479,7 @@ class ScreenReaderApplication:
         if normalized_key in {"enter", "space"} and target and self._requires_focus_mode(target):
             focused = target.focus()
             logger.debug("editable_focus_requested node=%r result=%s", target, focused)
-            self.interaction_mode = InteractionMode.FOCUS
-            self._focus_mode_auto_entered = True
+            self._set_interaction_mode(InteractionMode.FOCUS, automatic=True)
             return self._speak_command("Focus mode")
 
         browse_action = self._browse_key_action(normalized_key)
@@ -450,7 +493,47 @@ class ScreenReaderApplication:
             return
 
         spoken = {" ": "space", "\n": "enter", "\t": "tab"}.get(text, text)
-        self._speak_auto(spoken)
+        self._speak_navigation(spoken)
+
+    def _speak_caret_navigation(self, navigation: CaretNavigation) -> None:
+        if self.interaction_mode is not InteractionMode.FOCUS:
+            return
+
+        modifiers = {normalize_key(modifier) for modifier in navigation.modifiers}
+        if not modifiers.issubset({"control", "shift"}):
+            return
+
+        if "control" in modifiers:
+            spoken = self._word_at_offset(navigation.text, navigation.offset)
+        else:
+            index = navigation.offset if navigation.key == "left" else navigation.offset - 1
+            spoken = self._character_at_index(navigation.text, index)
+        if navigation.password and spoken not in {"start of text", "end of text"}:
+            spoken = "star"
+        self._speak_navigation(spoken)
+
+    def _set_interaction_mode(self, mode: InteractionMode, *, automatic: bool) -> None:
+        self.interaction_mode = mode
+        self._focus_mode_auto_entered = automatic and mode is InteractionMode.FOCUS
+        set_browse_mode = getattr(self.accessibility_backend, "set_browse_mode", None)
+        if callable(set_browse_mode):
+            set_browse_mode(mode is InteractionMode.BROWSE)
+        logger.info("interaction_mode_changed mode=%s automatic=%s", mode, automatic)
+
+    @staticmethod
+    def _character_at_index(text: str, index: int) -> str:
+        if index < 0:
+            return "start of text"
+        if index >= len(text):
+            return "end of text"
+        return {" ": "space", "\n": "new line", "\t": "tab"}.get(text[index], text[index])
+
+    @staticmethod
+    def _word_at_offset(text: str, offset: int) -> str:
+        if offset >= len(text):
+            return "end of text"
+        match = re.search(r"\w+|[^\w\s]", text[max(offset, 0) :], flags=re.UNICODE)
+        return match.group(0) if match is not None else "end of text"
 
     @staticmethod
     def _requires_focus_mode(node: AccessibleNode) -> bool:
@@ -764,6 +847,12 @@ class ScreenReaderApplication:
             return False
 
         return self.speech_controller.speak(text)
+
+    def _speak_navigation(self, text: str) -> bool:
+        logger.debug("speech_navigation mode=%s text=%r", self.speech_mode, text)
+        if self.speech_mode is not SpeechMode.TALK:
+            return False
+        return self.speech_controller.speak(text, allow_duplicate=True)
 
     def _speak_command(self, text: str) -> bool:
         cleaned_text = text.strip()

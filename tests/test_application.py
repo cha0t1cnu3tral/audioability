@@ -1,4 +1,4 @@
-from audioability.accessibility.models import AccessibleNode
+from audioability.accessibility.models import AccessibleNode, CaretNavigation
 from audioability.accessibility.navigation import ObjectNavigationAction
 from audioability.core.application import InteractionMode, ScreenReaderApplication, SpeechMode
 from audioability.input.commands import Command, CommandName
@@ -56,6 +56,15 @@ class CaptureBackend(StoppableBackend):
     def capture_keyboard(self, active: bool) -> bool:
         self.capture_states.append(active)
         return True
+
+
+class BrowseModeBackend(StoppableBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.browse_states: list[bool] = []
+
+    def set_browse_mode(self, active: bool) -> None:
+        self.browse_states.append(active)
 
 
 def assert_interaction_mode(app: ScreenReaderApplication, mode: InteractionMode) -> None:
@@ -298,6 +307,22 @@ def test_editable_focus_auto_enters_focus_mode_and_escape_returns_to_browse() ->
     assert speech.messages == ["Search entry editable", "Browse mode"]
 
 
+def test_focus_mode_releases_browse_grabs_and_escape_restores_them() -> None:
+    backend = BrowseModeBackend()
+    app = ScreenReaderApplication(
+        dry_run=True,
+        accessibility_backend=backend,
+        speech_driver=NullSpeechDriver(),
+    )
+
+    app._speak_focused_node(
+        AccessibleNode(name="Search", role="entry", state=frozenset({"editable"}))
+    )
+    assert app.handle_key("Escape") is True
+
+    assert backend.browse_states == [False, True]
+
+
 def test_enter_on_virtual_editable_object_moves_system_focus() -> None:
     speech = NullSpeechDriver()
     focus_calls = 0
@@ -330,9 +355,40 @@ def test_inserted_text_is_spoken_in_focus_mode() -> None:
     app.interaction_mode = InteractionMode.FOCUS
 
     app._speak_typed_text("h")
+    app._speak_typed_text("h")
     app._speak_typed_text(" ")
 
-    assert speech.messages == ["h", "space"]
+    assert speech.messages == ["h", "h", "space"]
+
+
+def test_character_and_word_caret_navigation_are_spoken_in_focus_mode() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app.interaction_mode = InteractionMode.FOCUS
+
+    app._speak_caret_navigation(CaretNavigation("hello world", 1, "right"))
+    app._speak_caret_navigation(CaretNavigation("hello world", 1, "left"))
+    app._speak_caret_navigation(
+        CaretNavigation("hello world", 6, "right", ("control",))
+    )
+    app._speak_caret_navigation(
+        CaretNavigation("hello world", 0, "left", ("control",))
+    )
+
+    assert speech.messages == ["h", "e", "world", "hello"]
+
+
+def test_password_caret_navigation_remains_masked() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app.interaction_mode = InteractionMode.FOCUS
+
+    app._speak_caret_navigation(CaretNavigation("******", 1, "right", password=True))
+    app._speak_caret_navigation(
+        CaretNavigation("******", 2, "right", ("control",), password=True)
+    )
+
+    assert speech.messages == ["star", "star"]
 
 
 def test_manual_focus_mode_passes_plain_keys_to_application() -> None:
@@ -458,6 +514,34 @@ def test_browse_mode_supports_all_nvda_default_quick_navigation_categories() -> 
         )
         assert app.handle_key(key) is True, key
         assert app.object_navigator.current is target, key
+
+
+def test_browse_mode_supports_nvda_style_table_navigation() -> None:
+    speech = NullSpeechDriver()
+    headers = tuple(
+        AccessibleNode(name, "table column header")
+        for name in ("Item", "Status", "Enabled")
+    )
+    cells = tuple(
+        AccessibleNode(name, "table cell")
+        for name in ("Alpha", "Ready", "Yes", "Bravo", "Review", "No")
+    )
+    table = AccessibleNode("Projects", "tree table", children=(*headers, *cells))
+    root = AccessibleNode("Window", "document", children=(table,))
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app.object_navigator.set_root(root)
+
+    assert app.handle_key("t") is True
+    assert app.handle_key("right", ("control", "alt")) is True
+    assert app.handle_key("right", ("control", "alt")) is True
+    assert app.handle_key("down", ("control", "alt")) is True
+
+    assert speech.messages == [
+        "Projects tree table 9 items",
+        "Alpha table cell Item row 1 of 2 column 1 of 3",
+        "Ready table cell Status row 1 of 2 column 2 of 3",
+        "Review table cell Status row 2 of 2 column 2 of 3",
+    ]
 
 
 def test_radio_and_check_box_speech_reports_checked_and_not_checked() -> None:
@@ -668,6 +752,21 @@ def test_input_help_describes_browse_mode_quick_navigation() -> None:
         "Input help on",
         "h next heading",
         "shift+h previous heading",
+    ]
+
+
+def test_input_help_describes_table_navigation() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    assert app.handle_key("1", ("Caps_Lock",)) is True
+    assert app.handle_key("right", ("control", "alt")) is True
+    assert app.handle_key("pageup", ("control", "alt")) is True
+
+    assert speech.messages == [
+        "Input help on",
+        "control+alt+right next table column",
+        "control+alt+pageup first table row",
     ]
 
 

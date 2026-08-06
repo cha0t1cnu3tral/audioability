@@ -7,7 +7,7 @@ from contextlib import suppress
 from typing import Any, Protocol
 
 from audioability.accessibility.filtering import FocusEventFilter
-from audioability.accessibility.models import AccessibleNode
+from audioability.accessibility.models import AccessibleNode, CaretNavigation
 from audioability.input.commands import (
     DEFAULT_COMMAND_BINDINGS,
     is_modifier_key,
@@ -89,11 +89,13 @@ class AtSpiAccessibilityBackend:
             "object:state-changed:expanded",
             "object:active-descendant-changed",
             "object:text-changed:insert",
+            "object:text-caret-moved",
         ),
         on_focus: Callable[[AccessibleNode], None] | None = None,
         on_focus_tree: Callable[[AccessibleNode, AccessibleNode], None] | None = None,
         on_key: Callable[[str, tuple[str, ...]], bool] | None = None,
         on_text_insert: Callable[[str], None] | None = None,
+        on_caret_move: Callable[[CaretNavigation], None] | None = None,
         on_state_change: Callable[[AccessibleNode, str, bool], None] | None = None,
         event_filter: FocusEventFilter | None = None,
         max_text_length: int = 240,
@@ -106,6 +108,7 @@ class AtSpiAccessibilityBackend:
         self.on_focus_tree = on_focus_tree
         self.on_key = on_key
         self.on_text_insert = on_text_insert
+        self.on_caret_move = on_caret_move
         self.on_state_change = on_state_change
         self.event_filter = event_filter or FocusEventFilter()
         self.max_text_length = max_text_length
@@ -124,6 +127,8 @@ class AtSpiAccessibilityBackend:
         self._reader_modifier_masks: dict[int, str] = {}
         self._reader_modifier_by_keysym: dict[int, int] = {}
         self._keyboard_captured = False
+        self._browse_mode_active = True
+        self._last_caret_gesture: tuple[str, tuple[str, ...], float] | None = None
         self._last_device_event: tuple[bool, int, int, int, str] | None = None
         self._last_device_event_at = 0.0
         self._last_device_event_handled = False
@@ -170,6 +175,9 @@ class AtSpiAccessibilityBackend:
 
     def _handle_event(self, event: Any) -> None:
         event_type = str(getattr(event, "type", ""))
+        if "text-caret-moved" in event_type:
+            self._handle_caret_move(event)
+            return
         if "text-changed:insert" in event_type:
             self._handle_text_insert(event)
             return
@@ -321,7 +329,34 @@ class AtSpiAccessibilityBackend:
             return False
 
         modifiers = self._pressed_modifiers | self._modifier_names_from_mask(modifier_mask)
-        return self.on_key(key, tuple(sorted(modifiers)))
+        normalized_key = normalize_key(key).removeprefix("arrow")
+        normalized_modifiers = tuple(sorted(modifiers))
+        if normalized_key in {"left", "right"} and set(normalized_modifiers).issubset(
+            {"control", "shift"}
+        ):
+            self._last_caret_gesture = (
+                normalized_key,
+                normalized_modifiers,
+                time.monotonic(),
+            )
+        elif not is_modifier_key(key):
+            self._last_caret_gesture = None
+        return self.on_key(key, normalized_modifiers)
+
+    def set_browse_mode(self, active: bool) -> None:
+        """Switch between browse grabs and pass-through focus-mode input."""
+
+        if self._browse_mode_active == active:
+            return
+        self._browse_mode_active = active
+        if (
+            self._keyboard_atspi is not None
+            and self._keyboard_device is not None
+            and not self._key_grabs_suspended
+        ):
+            self._remove_device_key_grabs(self._keyboard_device)
+            self._register_device_key_grabs(self._keyboard_atspi, self._keyboard_device)
+        logger.info("browse_key_grabs active=%s", active)
 
     def pass_next_key(self) -> None:
         """Temporarily release command grabs so one complete gesture can pass through."""
@@ -642,8 +677,7 @@ class AtSpiAccessibilityBackend:
             )
         )
 
-    @staticmethod
-    def _grab_gestures() -> tuple[tuple[str, ...], ...]:
+    def _grab_gestures(self) -> tuple[tuple[str, ...], ...]:
         gestures = {
             tuple(normalize_key(part) for part in gesture.split("+"))
             for binding in DEFAULT_COMMAND_BINDINGS
@@ -670,6 +704,10 @@ class AtSpiAccessibilityBackend:
                 )
             }
         )
+        gestures.update({("capslock",), ("insert",)})
+        if not self._browse_mode_active:
+            return tuple(sorted(gestures))
+
         browse_keys = (
             "left",
             "right",
@@ -714,7 +752,19 @@ class AtSpiAccessibilityBackend:
         )
         gestures.update((key,) for key in browse_keys)
         gestures.update(("shift", key) for key in browse_keys if key not in {"esc"})
-        gestures.update({("capslock",), ("insert",)})
+        gestures.update(
+            ("control", "alt", key)
+            for key in (
+                "left",
+                "right",
+                "up",
+                "down",
+                "home",
+                "end",
+                "pageup",
+                "pagedown",
+            )
+        )
         return tuple(sorted(gestures))
 
     @staticmethod
@@ -1055,6 +1105,59 @@ class AtSpiAccessibilityBackend:
         if text:
             logger.debug("text_insert text=%r role=%r", text, role)
             self.on_text_insert(text)
+
+    def _handle_caret_move(self, event: Any) -> None:
+        if self.on_caret_move is None or self._last_caret_gesture is None:
+            return
+
+        key, modifiers, gesture_time = self._last_caret_gesture
+        self._last_caret_gesture = None
+        if time.monotonic() - gesture_time > 2.0:
+            return
+
+        offset = getattr(event, "detail1", None)
+        if not isinstance(offset, int) or offset < 0:
+            return
+
+        source = getattr(event, "source", None)
+        role = self._read_role(source).casefold()
+        text_interface = self._query_interface(source, "queryText")
+        character_count = getattr(text_interface, "characterCount", 0)
+        if not isinstance(character_count, int) or character_count < 0:
+            return
+
+        password = "password" in role
+        if password:
+            text = "*" * character_count
+            relative_offset = min(offset, character_count)
+        else:
+            get_text = getattr(text_interface, "getText", None)
+            if not callable(get_text):
+                return
+            radius = max(self.max_text_length, 512)
+            start = max(0, offset - radius)
+            end = min(character_count, offset + radius)
+            value = self._safe_call(get_text, start, end)
+            if not isinstance(value, str):
+                return
+            text = value
+            relative_offset = offset - start
+
+        navigation = CaretNavigation(
+            text=text,
+            offset=relative_offset,
+            key=key,
+            modifiers=modifiers,
+            password=password,
+        )
+        logger.debug(
+            "caret_navigation key=%r modifiers=%r offset=%d password=%s",
+            key,
+            modifiers,
+            offset,
+            password,
+        )
+        self.on_caret_move(navigation)
 
     def _handle_state_change(self, event: Any, event_type: str) -> None:
         if self.on_state_change is None:

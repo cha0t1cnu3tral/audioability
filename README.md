@@ -167,6 +167,21 @@ P text paragraph          W spelling error       1-9 heading level
 
 Comma moves past the current list or table, and Shift+Comma moves to its start.
 
+Editable text uses the application's native caret in focus mode. Left and Right announce
+the character crossed by the caret; Control+Left and Control+Right announce the word at
+the new caret position. Repeated characters are spoken, and password text remains masked.
+
+NVDA-style table navigation is available after moving to a table in browse mode:
+
+```text
+Control+Alt+Left/Right      previous/next column in the current row
+Control+Alt+Up/Down         previous/next row in the current column
+Control+Alt+Home/End        first/last column in the current row
+Control+Alt+PageUp/PageDown first/last row in the current column
+```
+
+Cell announcements include the column header and row/column position when available.
+
 Object navigation:
 
 ```text

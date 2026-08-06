@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from pytest import MonkeyPatch
 
 from audioability.accessibility.backends import AtSpiAccessibilityBackend
-from audioability.accessibility.models import AccessibleNode
+from audioability.accessibility.models import AccessibleNode, CaretNavigation
 
 
 def test_atspi_backend_fallback_registers_global_keys_for_every_modifier_mask(
@@ -343,6 +343,24 @@ def test_atspi_backend_captures_and_releases_keyboard_for_modal_input() -> None:
     assert calls == ["grab", "ungrab"]
 
 
+def test_atspi_backend_uses_browse_specific_key_grabs() -> None:
+    backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
+
+    browse_gestures = set(backend._grab_gestures())
+    assert ("h",) in browse_gestures
+    assert ("left",) in browse_gestures
+    assert ("control", "alt", "right") in browse_gestures
+
+    backend.set_browse_mode(False)
+    focus_gestures = set(backend._grab_gestures())
+
+    assert ("h",) not in focus_gestures
+    assert ("left",) not in focus_gestures
+    assert ("control", "alt", "right") not in focus_gestures
+    assert ("sr", "tab") in focus_gestures
+    assert ("capslock",) in focus_gestures
+
+
 def test_atspi_backend_uses_device_watcher_on_pre_260_atspi(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -571,6 +589,53 @@ def test_atspi_backend_reports_inserted_text() -> None:
     )
 
     assert inserted == ["x"]
+
+
+def test_atspi_backend_reports_character_caret_navigation() -> None:
+    navigation: list[CaretNavigation] = []
+    backend = AtSpiAccessibilityBackend(
+        on_key=lambda key, modifiers: False,
+        on_caret_move=navigation.append,
+    )
+    text = "hello world"
+    source = SimpleNamespace(
+        getRoleName=lambda: "text",
+        queryText=lambda: SimpleNamespace(
+            characterCount=len(text),
+            getText=lambda start, end: text[start:end],
+        ),
+    )
+
+    backend._handle_device_key_pressed(None, 114, 0xFF53, 0, "")
+    backend._handle_event(
+        SimpleNamespace(type="object:text-caret-moved", source=source, detail1=1)
+    )
+
+    assert navigation == [CaretNavigation("hello world", 1, "right")]
+
+
+def test_atspi_backend_reports_control_word_caret_navigation_and_masks_password() -> None:
+    navigation: list[CaretNavigation] = []
+    backend = AtSpiAccessibilityBackend(
+        on_key=lambda key, modifiers: False,
+        on_caret_move=navigation.append,
+    )
+    source = SimpleNamespace(
+        getRoleName=lambda: "password text",
+        queryText=lambda: SimpleNamespace(
+            characterCount=6,
+            getText=lambda start, end: "secret"[start:end],
+        ),
+    )
+
+    backend._handle_device_key_pressed(None, 114, 0xFF53, 1 << 2, "")
+    backend._handle_event(
+        SimpleNamespace(type="object:text-caret-moved", source=source, detail1=6)
+    )
+
+    assert navigation == [
+        CaretNavigation("******", 6, "right", ("control",), password=True)
+    ]
 
 
 def test_atspi_backend_reports_control_state_changes_without_focus_dispatch() -> None:

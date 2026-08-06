@@ -5,6 +5,17 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
+class CaretNavigation:
+    """Text and input gesture associated with a system-caret movement."""
+
+    text: str
+    offset: int
+    key: str
+    modifiers: tuple[str, ...] = ()
+    password: bool = False
+
+
+@dataclass(frozen=True)
 class AccessibleNode:
     name: str
     role: str

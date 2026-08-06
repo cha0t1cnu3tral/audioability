@@ -199,3 +199,49 @@ def test_object_navigator_handles_focus_outside_cached_tree() -> None:
     assert result.handled is False
     assert result.node is new_focus
     assert result.message == "No object"
+
+
+def test_object_navigator_moves_across_table_rows_and_columns() -> None:
+    headers = tuple(
+        AccessibleNode(name, "table column header")
+        for name in ("Item", "Status", "Enabled")
+    )
+    cells = tuple(
+        AccessibleNode(name, "table cell")
+        for name in ("Alpha", "Ready", "Yes", "Bravo", "Review", "No")
+    )
+    table = AccessibleNode("Projects", "tree table", children=(*headers, *cells))
+    navigator = ObjectNavigator(table)
+
+    first = navigator.move_table_cell("right")
+    assert first.node is cells[0]
+    assert first.table_position is not None
+    assert first.table_position.column_header == "Item"
+
+    second = navigator.move_table_cell("right")
+    assert second.node is cells[1]
+    assert second.table_position is not None
+    assert (second.table_position.row, second.table_position.column) == (0, 1)
+
+    below = navigator.move_table_cell("down")
+    assert below.node is cells[4]
+    assert below.table_position is not None
+    assert (below.table_position.row, below.table_position.column) == (1, 1)
+
+    assert navigator.move_table_cell("left").node is cells[3]
+    edge = navigator.move_table_cell("left")
+    assert edge.handled is True
+    assert edge.message == "Edge of table"
+
+
+def test_object_navigator_moves_to_table_edges() -> None:
+    headers = tuple(AccessibleNode(str(index), "column header") for index in range(3))
+    cells = tuple(AccessibleNode(str(index), "cell") for index in range(9))
+    table = AccessibleNode("Data", "table", children=(*headers, *cells))
+    navigator = ObjectNavigator(table)
+
+    navigator.move_table_cell("right")
+    assert navigator.move_table_cell("end").node is cells[2]
+    assert navigator.move_table_cell("pagedown").node is cells[8]
+    assert navigator.move_table_cell("home").node is cells[6]
+    assert navigator.move_table_cell("pageup").node is cells[0]
