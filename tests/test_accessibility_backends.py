@@ -170,6 +170,7 @@ def test_atspi_backend_device_listener_supports_global_signals(
     assert device.grab_keycodes[capslock_index] == 0xE5
     initial_grab_count = len(device.grabs)
     assert len(device.grab_callbacks) == initial_grab_count
+    assert len({id(callback) for callback in device.grab_callbacks}) == 1
 
     pressed = device.callbacks["key-pressed"]
     released = device.callbacks["key-released"]
@@ -222,6 +223,58 @@ def test_atspi_backend_only_dispatches_shift_when_used_alone() -> None:
     backend._handle_device_key_released(None, 50, 0xFFE1, 1, "")
 
     assert key_events[-1] == ("shiftl", ("shift",))
+
+
+def test_atspi_backend_registers_grabs_with_legacy_modifier_api(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class FakeKeyDefinition:
+        keycode = 0
+        keysym = 0
+        modifiers = 0
+
+    class LegacyDevice:
+        def __init__(self) -> None:
+            self.mapped: list[int] = []
+            self.grabs: list[tuple[int, int, int]] = []
+
+        def map_modifier(self, keycode: int) -> int:
+            self.mapped.append(keycode)
+            return 1 << (8 + len(self.mapped))
+
+        def add_key_grab(self, definition: FakeKeyDefinition, callback: object) -> int:
+            self.grabs.append(
+                (definition.keycode, definition.keysym, definition.modifiers)
+            )
+            return len(self.grabs)
+
+    keycodes = {
+        0xFFE5: (66,),
+        0xFF63: (118,),
+        0xFF9E: (90,),
+        0xFFB0: (90,),
+        0xFF54: (116,),
+        ord("n"): (57,),
+    }
+    backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
+    monkeypatch.setattr(
+        backend,
+        "_keycodes_for_keysym",
+        lambda keysym: keycodes.get(keysym, (keysym & 0xFF,)),
+    )
+    device = LegacyDevice()
+    atspi = SimpleNamespace(
+        KeyDefinition=FakeKeyDefinition,
+        ModifierType=SimpleNamespace(SHIFT=0, CONTROL=2, ALT=3, META=4, SUPER=6),
+    )
+
+    backend._register_device_key_grabs(atspi, device)
+
+    capslock_mask = backend._reader_modifier_by_keysym[0xFFE5]
+    assert device.mapped[:3] == [66, 118, 90]
+    assert (66, 0xFFE5, capslock_mask) in device.grabs
+    assert (57, ord("n"), capslock_mask) in device.grabs
+    assert (116, 0xFF54, 0) in device.grabs
 
 
 def test_atspi_backend_clears_stale_standard_modifiers_from_current_mask() -> None:

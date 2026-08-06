@@ -115,10 +115,12 @@ class AtSpiAccessibilityBackend:
         self._pressed_modifiers: set[str] = set()
         self._keyboard_atspi: Any | None = None
         self._keyboard_device: Any | None = None
+        self._device_key_callback: Callable[..., bool] | None = None
         self._keyboard_signal_ids: list[int] = []
         self._key_grab_ids: list[int] = []
         self._key_grabs_suspended = False
         self._mapped_reader_keysyms: list[int] = []
+        self._mapped_reader_keycodes: list[int] = []
         self._reader_modifier_masks: dict[int, str] = {}
         self._reader_modifier_by_keysym: dict[int, int] = {}
         self._keyboard_captured = False
@@ -388,6 +390,12 @@ class AtSpiAccessibilityBackend:
         return True
 
     def _connect_device_key_listener(self, atspi: Any, device: Any) -> bool:
+        if self._device_key_callback is None:
+            # PyGObject does not keep a Python bound method alive for all
+            # Atspi.Device callback annotations. Keep one stable callback for
+            # the lifetime of the watcher and every key grab.
+            self._device_key_callback = self._handle_device_key_event
+
         connect = getattr(device, "connect", None)
         if self._atspi_version(atspi) >= (2, 60) and callable(connect):
             signal_ids: list[int] = []
@@ -409,37 +417,49 @@ class AtSpiAccessibilityBackend:
             return False
 
         try:
-            add_key_watcher(self._handle_device_key_event)
+            add_key_watcher(self._device_key_callback)
         except Exception:
+            self._device_key_callback = None
             return False
         return True
 
     def _register_device_key_grabs(self, atspi: Any, device: Any) -> None:
         add_key_grab = getattr(device, "add_key_grab", None)
         map_keysym_modifier = getattr(device, "map_keysym_modifier", None)
+        map_modifier = getattr(device, "map_modifier", None)
         key_definition_type = getattr(atspi, "KeyDefinition", None)
-        if (
-            not callable(add_key_grab)
-            or not callable(map_keysym_modifier)
-            or not callable(key_definition_type)
-        ):
+        if not callable(add_key_grab) or not callable(key_definition_type):
             return
 
-        if not self._mapped_reader_keysyms:
+        if not self._mapped_reader_keysyms and not self._mapped_reader_keycodes:
             for name, keysym in self._screen_reader_modifier_keysyms():
-                try:
-                    modifier = map_keysym_modifier(keysym)
-                except Exception:
-                    continue
+                modifier = 0
+                if callable(map_keysym_modifier):
+                    try:
+                        modifier = map_keysym_modifier(keysym)
+                    except Exception:
+                        continue
+                    if isinstance(modifier, int) and modifier != 0:
+                        self._mapped_reader_keysyms.append(keysym)
+                elif callable(map_modifier):
+                    for keycode in self._keycodes_for_keysym(keysym):
+                        try:
+                            modifier = map_modifier(keycode)
+                        except Exception:
+                            continue
+                        if isinstance(modifier, int) and modifier != 0:
+                            if keycode not in self._mapped_reader_keycodes:
+                                self._mapped_reader_keycodes.append(keycode)
+                            break
                 if not isinstance(modifier, int) or modifier == 0:
                     continue
-                self._mapped_reader_keysyms.append(keysym)
                 self._reader_modifier_masks[modifier] = name
                 self._reader_modifier_by_keysym[keysym] = modifier
 
         reader_modifiers = tuple(self._reader_modifier_masks)
 
         registered: set[tuple[int, int, int]] = set()
+        rejected = 0
         for gesture in self._grab_gestures():
             key = gesture[-1]
             modifier_names = gesture[:-1]
@@ -470,13 +490,23 @@ class AtSpiAccessibilityBackend:
                             definition.keysym = keysym
                             definition.modifiers = modifier
                             grab_id = add_key_grab(
-                                definition, self._handle_device_key_event
+                                definition, self._device_key_callback
                             )
                         except Exception:
+                            rejected += 1
                             continue
                         registered.add(registration)
                         if isinstance(grab_id, int) and grab_id != 0:
                             self._key_grab_ids.append(grab_id)
+                        else:
+                            rejected += 1
+
+        logger.info(
+            "device_key_grabs registered=%d rejected=%d definitions=%d",
+            len(self._key_grab_ids),
+            rejected,
+            len(registered),
+        )
 
     def _remove_device_key_grabs(self, device: Any) -> None:
         remove_key_grab = getattr(device, "remove_key_grab", None)
@@ -519,6 +549,12 @@ class AtSpiAccessibilityBackend:
                 with suppress(Exception):
                     unmap_keysym_modifier(keysym)
 
+        unmap_modifier = getattr(device, "unmap_modifier", None)
+        if callable(unmap_modifier):
+            for keycode in self._mapped_reader_keycodes:
+                with suppress(Exception):
+                    unmap_modifier(keycode)
+
         disconnect = getattr(device, "disconnect", None)
         if callable(disconnect):
             for signal_id in self._keyboard_signal_ids:
@@ -526,8 +562,10 @@ class AtSpiAccessibilityBackend:
                     disconnect(signal_id)
 
         self._keyboard_signal_ids.clear()
+        self._device_key_callback = None
         self._key_grabs_suspended = False
         self._mapped_reader_keysyms.clear()
+        self._mapped_reader_keycodes.clear()
         self._reader_modifier_masks.clear()
         self._reader_modifier_by_keysym.clear()
 
