@@ -10,7 +10,9 @@ from audioability.accessibility.filtering import FocusEventFilter
 from audioability.accessibility.models import AccessibleNode, CaretNavigation
 from audioability.input.commands import (
     DEFAULT_COMMAND_BINDINGS,
+    command_for_gesture,
     is_modifier_key,
+    is_screen_reader_modifier,
     key_from_keysym,
     keysym_for_key,
     normalize_key,
@@ -133,6 +135,7 @@ class AtSpiAccessibilityBackend:
         self._reader_modifier_by_keysym: dict[int, int] = {}
         self._keyboard_captured = False
         self._browse_mode_active = True
+        self._legacy_hybrid_listener = False
         self._device_grab_refresh_pending = False
         self._last_caret_gesture: tuple[str, tuple[str, ...], float] | None = None
         self._last_device_event: tuple[bool, int, int, int, str] | None = None
@@ -152,20 +155,30 @@ class AtSpiAccessibilityBackend:
             pyatspi.Registry.registerEventListener(self._handle_event, event_type)
 
         using_device_listener = self.on_key is not None and self._start_device_key_listener(pyatspi)
-        if self.on_key is not None and not using_device_listener:
+        using_registry_listener = self.on_key is not None and (
+            not using_device_listener or self._legacy_hybrid_listener
+        )
+        if using_registry_listener:
             pyatspi.Registry.registerKeystrokeListener(
                 self._handle_key_event,
                 mask=self._modifier_masks,
                 kind=(pyatspi.KEY_PRESSED_EVENT, pyatspi.KEY_RELEASED_EVENT),
                 synchronous=True,
                 preemptive=True,
-                global_=True,
+                global_=not using_device_listener,
             )
 
+        keyboard_listener = (
+            "device+registry"
+            if using_device_listener and using_registry_listener
+            else "device"
+            if using_device_listener
+            else "registry"
+        )
         logger.info(
             "atspi_start event_types=%r keyboard_listener=%s",
             self.event_types,
-            "device" if using_device_listener else "registry",
+            keyboard_listener,
         )
         pyatspi.Registry.start()
 
@@ -235,6 +248,7 @@ class AtSpiAccessibilityBackend:
             key,
             pressed=not self._is_key_release_event(event),
             modifier_mask=modifier_mask,
+            event_source="registry",
         )
 
     def _handle_device_key_event(
@@ -259,7 +273,12 @@ class AtSpiAccessibilityBackend:
         if not key:
             return False
 
-        handled = self._handle_key_transition(key, pressed=pressed, modifier_mask=modifiers)
+        handled = self._handle_key_transition(
+            key,
+            pressed=pressed,
+            modifier_mask=modifiers,
+            event_source="device",
+        )
         self._last_device_event = signature
         self._last_device_event_at = now
         self._last_device_event_handled = handled
@@ -291,6 +310,7 @@ class AtSpiAccessibilityBackend:
         *,
         pressed: bool,
         modifier_mask: int | None = None,
+        event_source: str = "direct",
     ) -> bool:
         normalized_key = normalize_key(key)
         if pressed and modifier_mask is not None:
@@ -312,7 +332,9 @@ class AtSpiAccessibilityBackend:
         if not pressed:
             handled = False
             if normalized_key in self._deferred_modifier_keys:
-                handled = self._dispatch_key_event(key, modifier_mask or 0)
+                handled = self._dispatch_key_event(
+                    key, modifier_mask or 0, event_source=event_source
+                )
                 self._deferred_modifier_keys.discard(normalized_key)
             self._pressed_modifiers.discard(normalized_key)
             return handled
@@ -326,7 +348,9 @@ class AtSpiAccessibilityBackend:
             self._deferred_modifier_keys.clear()
 
         grabs_were_suspended = self._key_grabs_suspended
-        handled = self._dispatch_key_event(key, modifier_mask or 0)
+        handled = self._dispatch_key_event(
+            key, modifier_mask or 0, event_source=event_source
+        )
         if self._tracks_as_modifier(key):
             self._pressed_modifiers.add(normalize_key(key))
         elif grabs_were_suspended:
@@ -334,15 +358,23 @@ class AtSpiAccessibilityBackend:
 
         return handled
 
-    def _dispatch_key_event(self, key: str, modifier_mask: int = 0) -> bool:
+    def _dispatch_key_event(
+        self,
+        key: str,
+        modifier_mask: int = 0,
+        *,
+        event_source: str = "direct",
+    ) -> bool:
         if self.on_key is None:
             return False
 
         modifiers = self._pressed_modifiers | self._modifier_names_from_mask(modifier_mask)
         normalized_key = normalize_key(key).removeprefix("arrow")
         normalized_modifiers = tuple(sorted(modifiers))
-        if normalized_key in {"left", "right"} and set(normalized_modifiers).issubset(
-            {"control", "shift"}
+        if (
+            not self._browse_mode_active
+            and normalized_key in {"left", "right"}
+            and set(normalized_modifiers).issubset({"control", "shift"})
         ):
             self._last_caret_gesture = (
                 normalized_key,
@@ -351,7 +383,40 @@ class AtSpiAccessibilityBackend:
             )
         elif not is_modifier_key(key):
             self._last_caret_gesture = None
+
+        if self._legacy_hybrid_listener:
+            global_gesture = self._is_global_gesture(
+                normalized_key, normalized_modifiers
+            )
+            if event_source == "device" and not global_gesture:
+                return False
+            if (
+                event_source == "registry"
+                and global_gesture
+                and not self._key_grabs_suspended
+            ):
+                return False
         return self.on_key(key, normalized_modifiers)
+
+    @staticmethod
+    def _is_global_gesture(key: str, modifiers: tuple[str, ...]) -> bool:
+        if command_for_gesture((*modifiers, key)) is not None:
+            return True
+        return any(is_screen_reader_modifier(modifier) for modifier in modifiers) and key in {
+            "left",
+            "right",
+            "up",
+            "down",
+            "numpad8",
+            "numpad4",
+            "numpad5",
+            "numpad6",
+            "numpad2",
+            "numpad9",
+            "numpad3",
+            "numpadminus",
+            "numpadenter",
+        }
 
     def set_browse_mode(self, active: bool) -> None:
         """Switch between browse grabs and pass-through focus-mode input."""
@@ -363,6 +428,7 @@ class AtSpiAccessibilityBackend:
             self._keyboard_atspi is not None
             and self._keyboard_device is not None
             and not self._key_grabs_suspended
+            and not self._legacy_hybrid_listener
             and not self._device_grab_refresh_pending
         ):
             self._device_grab_refresh_pending = True
@@ -445,15 +511,10 @@ class AtSpiAccessibilityBackend:
         """Use AT-SPI's global X11/Wayland device API when available."""
 
         atspi = getattr(pyatspi, "Atspi", None)
-        # Before AT-SPI 2.60 a DeviceLegacy grab has a void callback and is
-        # therefore always consumptive. Its grabs also cannot be safely
-        # replaced while the registry loop is running. The classic synchronous
-        # keystroke listener can decide per event whether to consume it, which
-        # is required for editable focus mode.
-        if self._atspi_version(atspi) < (2, 60):
-            return False
+        self._legacy_hybrid_listener = self._atspi_version(atspi) < (2, 60)
         device_type = getattr(atspi, "Device", None)
         if device_type is None:
+            self._legacy_hybrid_listener = False
             return False
 
         new_full = getattr(device_type, "new_full", None)
@@ -469,6 +530,7 @@ class AtSpiAccessibilityBackend:
             return False
 
         if device is None or not self._connect_device_key_listener(atspi, device):
+            self._legacy_hybrid_listener = False
             return False
 
         self._keyboard_atspi = atspi
@@ -656,6 +718,7 @@ class AtSpiAccessibilityBackend:
         self._mapped_reader_keycodes.clear()
         self._reader_modifier_masks.clear()
         self._reader_modifier_by_keysym.clear()
+        self._legacy_hybrid_listener = False
 
     def _modifier_names_from_mask(self, mask: int) -> set[str]:
         names = {
@@ -731,34 +794,8 @@ class AtSpiAccessibilityBackend:
         )
 
     def _grab_gestures(self) -> tuple[tuple[str, ...], ...]:
-        gestures = {
-            tuple(normalize_key(part) for part in gesture.split("+"))
-            for binding in DEFAULT_COMMAND_BINDINGS
-            for gesture in (binding.desktop_key, binding.laptop_key)
-            if "+" in gesture
-        }
-        gestures.update(
-            {
-                ("sr", key)
-                for key in (
-                    "left",
-                    "right",
-                    "up",
-                    "down",
-                    "numpad8",
-                    "numpad4",
-                    "numpad5",
-                    "numpad6",
-                    "numpad2",
-                    "numpad9",
-                    "numpad3",
-                    "numpadminus",
-                    "numpadenter",
-                )
-            }
-        )
-        gestures.update({("capslock",), ("insert",)})
-        if not self._browse_mode_active:
+        gestures = set(self._global_grab_gestures())
+        if self._legacy_hybrid_listener or not self._browse_mode_active:
             return tuple(sorted(gestures))
 
         browse_keys = (
@@ -818,6 +855,37 @@ class AtSpiAccessibilityBackend:
                 "pagedown",
             )
         )
+        return tuple(sorted(gestures))
+
+    @staticmethod
+    def _global_grab_gestures() -> tuple[tuple[str, ...], ...]:
+        gestures = {
+            tuple(normalize_key(part) for part in gesture.split("+"))
+            for binding in DEFAULT_COMMAND_BINDINGS
+            for gesture in (binding.desktop_key, binding.laptop_key)
+            if "+" in gesture
+        }
+        gestures.update(
+            {
+                ("sr", key)
+                for key in (
+                    "left",
+                    "right",
+                    "up",
+                    "down",
+                    "numpad8",
+                    "numpad4",
+                    "numpad5",
+                    "numpad6",
+                    "numpad2",
+                    "numpad9",
+                    "numpad3",
+                    "numpadminus",
+                    "numpadenter",
+                )
+            }
+        )
+        gestures.update({("capslock",), ("insert",)})
         return tuple(sorted(gestures))
 
     @staticmethod

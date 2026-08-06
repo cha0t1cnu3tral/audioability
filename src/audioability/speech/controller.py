@@ -96,7 +96,9 @@ class SpeechController:
         self._last_spoken_at: float | None = None
         self._selected_option_index = 0
         self._paused = False
-        self.settings = SpeechSettings()
+        self.settings = SpeechSettings(
+            language_index=self._preferred_english_language_index()
+        )
         self._sync_driver_configuration()
 
     @property
@@ -291,6 +293,15 @@ class SpeechController:
 
     def _selected_language(self) -> str:
         return self._languages[self.settings.language_index]
+
+    def _preferred_english_language_index(self) -> int:
+        normalized = tuple(language.casefold().replace("_", "-") for language in self._languages)
+        if "en" in normalized:
+            return normalized.index("en")
+        for index, language in enumerate(normalized):
+            if language.startswith("en-") or language == "english":
+                return index
+        return 0
 
     def _voices_for_selected_language(self) -> tuple[SynthesisVoice, ...]:
         language = self._selected_language()

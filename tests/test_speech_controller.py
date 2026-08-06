@@ -210,6 +210,22 @@ def test_setting_changes_are_applied_to_configurable_driver() -> None:
     )
 
 
+def test_english_is_the_initial_language_when_available() -> None:
+    speech = ConfigurableSpeechDriver()
+    SpeechController(
+        speech,
+        voices=(
+            SynthesisVoice("Français", "fr"),
+            SynthesisVoice("English default", "en"),
+            SynthesisVoice("English US", "en-US"),
+        ),
+    )
+
+    assert speech.configurations == [
+        SpeechConfiguration(voice="English default", language="en")
+    ]
+
+
 def test_language_and_voice_are_selected_separately() -> None:
     speech = ConfigurableSpeechDriver()
     controller = SpeechController(

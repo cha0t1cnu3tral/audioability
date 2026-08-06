@@ -433,7 +433,7 @@ def test_atspi_backend_coalesces_pending_grab_profile_refresh(
     assert len(scheduled) == 1
 
 
-def test_atspi_backend_uses_consumable_registry_listener_on_pre_260_atspi(
+def test_atspi_backend_uses_hybrid_listener_on_pre_260_atspi(
     monkeypatch: MonkeyPatch,
 ) -> None:
     callbacks: list[object] = []
@@ -471,9 +471,33 @@ def test_atspi_backend_uses_consumable_registry_listener_on_pre_260_atspi(
     )
     backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
 
-    assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is False
+    assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is True
 
-    assert callbacks == []
+    assert callbacks == [backend._handle_device_key_event]
+    assert backend._legacy_hybrid_listener is True
+
+
+def test_legacy_hybrid_observes_caret_keys_and_dispatches_browse_keys_once() -> None:
+    key_events: list[tuple[str, tuple[str, ...]]] = []
+    backend = AtSpiAccessibilityBackend(
+        on_key=lambda key, modifiers: key_events.append((key, modifiers)) or True
+    )
+    backend._legacy_hybrid_listener = True
+
+    assert backend._handle_key_transition(
+        "h", pressed=True, modifier_mask=0, event_source="device"
+    ) is False
+    assert backend._handle_key_transition(
+        "h", pressed=True, modifier_mask=0, event_source="registry"
+    ) is True
+    backend.set_browse_mode(False)
+    assert backend._handle_key_transition(
+        "right", pressed=True, modifier_mask=0, event_source="device"
+    ) is False
+
+    assert key_events == [("h", ())]
+    assert backend._last_caret_gesture is not None
+    assert backend._last_caret_gesture[:2] == ("right", ())
 
 
 def test_atspi_backend_disconnects_partial_signal_registration(
@@ -669,6 +693,7 @@ def test_atspi_backend_reports_character_caret_navigation() -> None:
         on_key=lambda key, modifiers: False,
         on_caret_move=navigation.append,
     )
+    backend.set_browse_mode(False)
     text = "hello world"
     source = SimpleNamespace(
         getRoleName=lambda: "text",
@@ -692,6 +717,7 @@ def test_atspi_backend_reports_control_word_caret_navigation_and_masks_password(
         on_key=lambda key, modifiers: False,
         on_caret_move=navigation.append,
     )
+    backend.set_browse_mode(False)
     source = SimpleNamespace(
         getRoleName=lambda: "password text",
         queryText=lambda: SimpleNamespace(
