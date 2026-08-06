@@ -544,6 +544,50 @@ class AtSpiAccessibilityBackend:
                 )
             }
         )
+        browse_keys = (
+            "left",
+            "right",
+            "up",
+            "down",
+            "enter",
+            "space",
+            "esc",
+            ",",
+            "h",
+            "l",
+            "i",
+            "t",
+            "k",
+            "n",
+            "f",
+            "u",
+            "v",
+            "e",
+            "b",
+            "x",
+            "c",
+            "r",
+            "q",
+            "s",
+            "m",
+            "g",
+            "d",
+            "o",
+            "a",
+            "p",
+            "w",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+        )
+        gestures.update((key,) for key in browse_keys)
+        gestures.update(("shift", key) for key in browse_keys if key not in {"esc"})
         return tuple(sorted(gestures))
 
     @staticmethod

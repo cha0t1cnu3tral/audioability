@@ -150,6 +150,10 @@ def test_atspi_backend_prefers_global_device_signals(monkeypatch: MonkeyPatch) -
     assert (0xFF99, capslock_mask) in device.grabs
     assert (0xFFB2, capslock_mask) in device.grabs
     assert (0xFFE3, 0) not in device.grabs
+    assert (0xFF54, 0) in device.grabs
+    assert (0xFF0D, 0) in device.grabs
+    assert (ord("h"), 0) in device.grabs
+    assert (ord("h"), 1) in device.grabs
     initial_grab_count = len(device.grabs)
     assert len(device.grab_callbacks) == initial_grab_count
 
