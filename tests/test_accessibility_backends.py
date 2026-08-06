@@ -461,12 +461,17 @@ def test_atspi_backend_coalesces_pending_grab_profile_refresh(
     assert len(scheduled) == 1
 
 
-def test_atspi_backend_rejects_legacy_device_on_pre_255_atspi(
+def test_atspi_backend_uses_legacy_device_on_pre_255_atspi(
     monkeypatch: MonkeyPatch,
 ) -> None:
     callbacks: list[object] = []
+    signals: list[str] = []
 
     class FakeDevice:
+        def connect(self, signal: str, callback: object) -> int:
+            signals.append(signal)
+            return len(signals)
+
         def add_key_watcher(self, callback: object) -> None:
             callbacks.append(callback)
 
@@ -499,9 +504,10 @@ def test_atspi_backend_rejects_legacy_device_on_pre_255_atspi(
     )
     backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
 
-    assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is False
+    assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is True
 
-    assert callbacks == []
+    assert signals == []
+    assert callbacks == [backend._handle_device_key_event]
 
 
 def test_atspi_backend_uses_key_watcher_before_signal_api_is_available() -> None:

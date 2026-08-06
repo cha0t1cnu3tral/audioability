@@ -216,10 +216,10 @@ Keyboard commands use AT-SPI's global device monitor instead of an application-l
 listener. X11 is handled directly. Global Wayland shortcuts require `at-spi2-core` 2.56 or
 newer (2.58 or newer is recommended) and a compositor that implements the accessibility
 keyboard-monitor protocol. Audioability selects that compositor-backed monitor when it is
-available and falls back to GNOME's global registry listener on older releases. That fallback
-is GNOME-specific; other older Wayland stacks may only report keys from the focused
-application. If commands are focus-only, update `at-spi2-core` and the desktop compositor
-together.
+available, retains the legacy device monitor for X11 and WSLg, and only falls back to the
+registry listener if no device monitor can be opened. Older native Wayland stacks may only
+report keys from the focused application. If commands are focus-only, update `at-spi2-core`
+and the desktop compositor together.
 
 Audioability keeps a native crash trace at `~/.local/state/audioability/crash.log` (or
 `$XDG_STATE_HOME/audioability/crash.log`). If it exits unexpectedly on another computer,

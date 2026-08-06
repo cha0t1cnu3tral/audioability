@@ -561,11 +561,6 @@ class AtSpiAccessibilityBackend:
         """Use AT-SPI's global X11/Wayland device API when available."""
 
         atspi = getattr(pyatspi, "Atspi", None)
-        # The compositor-backed device API was added in 2.55. Older Device
-        # objects are the legacy controller in disguise; accepting one makes
-        # Registry registration non-global and loses GNOME Wayland shortcuts.
-        if self._atspi_version(atspi) < (2, 55):
-            return False
         device_type = getattr(atspi, "Device", None)
         if device_type is None:
             return False
@@ -598,7 +593,10 @@ class AtSpiAccessibilityBackend:
             self._device_key_callback = self._handle_device_key_event
 
         connect = getattr(device, "connect", None)
-        if callable(connect):
+        # DeviceLegacy is a GObject and accepts these signal connections, but
+        # versions before the compositor-backed Device API never emit them.
+        # Use its key watcher instead of mistaking connectability for support.
+        if self._atspi_version(atspi) >= (2, 55) and callable(connect):
             signal_ids: list[int] = []
             try:
                 signal_ids.append(connect("key-pressed", self._handle_device_key_pressed))
