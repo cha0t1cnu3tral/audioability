@@ -5,7 +5,11 @@ import subprocess
 
 import pytest
 
-from audioability.speech.drivers import SpeechConfiguration, SpeechDispatcherDriver
+from audioability.speech.drivers import (
+    SpeechConfiguration,
+    SpeechDispatcherDriver,
+    SynthesisVoice,
+)
 
 
 def test_speech_dispatcher_uses_configured_output_settings(
@@ -120,4 +124,7 @@ def test_speech_dispatcher_lists_all_native_synthesis_voices() -> None:
     driver._client = Client()
     driver._client_checked = True
 
-    assert driver.available_voices() == ("English+Alex", "English+Annie")
+    assert driver.available_voices() == (
+        SynthesisVoice("English+Alex", "en", "Alex"),
+        SynthesisVoice("English+Annie", "en", "Annie"),
+    )

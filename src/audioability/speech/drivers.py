@@ -18,7 +18,15 @@ class SpeechConfiguration:
     rate: float = 1.0
     volume: float = 1.0
     voice: str = "default"
+    language: str = "default"
     punctuation: str = "some"
+
+
+@dataclass(frozen=True)
+class SynthesisVoice:
+    name: str
+    language: str
+    variant: str = ""
 
 
 @runtime_checkable
@@ -63,6 +71,8 @@ class SpeechDispatcherDriver:
             ]
             if self.configuration.voice != "default":
                 command.extend(("--synthesis-voice", self.configuration.voice))
+            if self.configuration.language != "default":
+                command.extend(("--language", self.configuration.language))
             command.append(text)
             if self._run(command):
                 return
@@ -94,24 +104,30 @@ class SpeechDispatcherDriver:
             return False
         return True
 
-    def available_voices(self) -> tuple[str, ...]:
+    def available_voices(self) -> tuple[SynthesisVoice, ...]:
         client = self._get_client()
         if client is not None:
             try:
                 voices = client.list_synthesis_voices()
             except Exception:
                 voices = ()
-            names = tuple(
-                str(voice[0]).strip()
+            catalog = tuple(
+                SynthesisVoice(
+                    name=str(voice[0]).strip(),
+                    language=str(voice[1]).strip() or "default",
+                    variant=str(voice[2]).strip() if len(voice) > 2 else "",
+                )
                 for voice in voices
-                if isinstance(voice, (tuple, list)) and voice and str(voice[0]).strip()
+                if isinstance(voice, (tuple, list))
+                and len(voice) >= 2
+                and str(voice[0]).strip()
             )
-            if names:
-                return tuple(dict.fromkeys(names))
+            if catalog:
+                return tuple(dict.fromkeys(catalog))
 
         resolved_executable = shutil.which(self.executable)
         if resolved_executable is None:
-            return ("default",)
+            return (SynthesisVoice("default", "default"),)
         try:
             result = subprocess.run(
                 [resolved_executable, "--list-synthesis-voices"],
@@ -120,14 +136,18 @@ class SpeechDispatcherDriver:
                 text=True,
             )
         except OSError:
-            return ("default",)
+            return (SynthesisVoice("default", "default"),)
 
-        names = tuple(
-            line[:42].strip()
+        catalog = tuple(
+            SynthesisVoice(
+                name=line[:42].strip(),
+                language=line[42:68].strip() or "default",
+                variant=line[68:].strip(),
+            )
             for line in result.stdout.splitlines()[1:]
             if line[:42].strip()
         )
-        return tuple(dict.fromkeys(names)) or ("default",)
+        return tuple(dict.fromkeys(catalog)) or (SynthesisVoice("default", "default"),)
 
     def _get_client(self) -> Any | None:
         if self._client_checked:

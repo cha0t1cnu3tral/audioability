@@ -21,7 +21,12 @@ from audioability.input.commands import (
 )
 from audioability.input.router import CommandRouter
 from audioability.speech.controller import SpeechController, VerbosityMode
-from audioability.speech.drivers import NullSpeechDriver, SpeechDispatcherDriver, SpeechDriver
+from audioability.speech.drivers import (
+    NullSpeechDriver,
+    SpeechDispatcherDriver,
+    SpeechDriver,
+    SynthesisVoice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +57,11 @@ class ScreenReaderApplication:
             NullSpeechDriver() if dry_run else SpeechDispatcherDriver()
         )
         available_voices = getattr(self.speech_driver, "available_voices", None)
-        voices = available_voices() if callable(available_voices) else ("default",)
+        voices = (
+            available_voices()
+            if callable(available_voices)
+            else (SynthesisVoice("default", "default"),)
+        )
         logger.info("speech_voices_discovered count=%d", len(voices))
         self.speech_controller = SpeechController(self.speech_driver, voices=voices)
         self.current_focus: AccessibleNode | None = None

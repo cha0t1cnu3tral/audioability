@@ -12,6 +12,7 @@ from audioability.speech.drivers import (
     ConfigurableSpeechDriver,
     SpeechConfiguration,
     SpeechDriver,
+    SynthesisVoice,
 )
 
 T = TypeVar("T")
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 class SpeechOption(StrEnum):
     RATE = "rate"
     VOLUME = "volume"
+    LANGUAGE = "language"
     VOICE = "voice"
     PUNCTUATION = "punctuation"
     VERBOSITY = "verbosity"
@@ -42,6 +44,7 @@ class VerbosityMode(StrEnum):
 class SpeechSettings:
     rate: float = 1.0
     volume: float = 1.0
+    language_index: int = 0
     voice_index: int = 0
     punctuation: PunctuationMode = PunctuationMode.SOME
     verbosity: VerbosityMode = VerbosityMode.NORMAL
@@ -68,6 +71,7 @@ class SpeechController:
     _options = (
         SpeechOption.RATE,
         SpeechOption.VOLUME,
+        SpeechOption.LANGUAGE,
         SpeechOption.VOICE,
         SpeechOption.PUNCTUATION,
         SpeechOption.VERBOSITY,
@@ -79,12 +83,13 @@ class SpeechController:
         self,
         driver: SpeechDriver,
         *,
-        voices: tuple[str, ...] = ("default",),
+        voices: tuple[SynthesisVoice, ...] = (SynthesisVoice("default", "default"),),
         duplicate_window_seconds: float = 0.75,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._driver = driver
-        self._voices = voices or ("default",)
+        self._voices = voices or (SynthesisVoice("default", "default"),)
+        self._languages = tuple(dict.fromkeys(voice.language for voice in self._voices))
         self._duplicate_window_seconds = duplicate_window_seconds
         self._clock = clock
         self._last_spoken_text: str | None = None
@@ -211,10 +216,17 @@ class SpeechController:
                 self.settings,
                 volume=self._clamp(round(self.settings.volume + (0.1 * direction), 1), 0.0, 1.0),
             )
-        elif option is SpeechOption.VOICE:
+        elif option is SpeechOption.LANGUAGE:
             self.settings = replace(
                 self.settings,
-                voice_index=(self.settings.voice_index + direction) % len(self._voices),
+                language_index=(self.settings.language_index + direction) % len(self._languages),
+                voice_index=0,
+            )
+        elif option is SpeechOption.VOICE:
+            voices = self._voices_for_selected_language()
+            self.settings = replace(
+                self.settings,
+                voice_index=(self.settings.voice_index + direction) % len(voices),
             )
         elif option is SpeechOption.PUNCTUATION:
             self.settings = replace(
@@ -243,7 +255,8 @@ class SpeechController:
             SpeechConfiguration(
                 rate=self.settings.rate,
                 volume=self.settings.volume,
-                voice=self._voices[self.settings.voice_index],
+                voice=self._selected_voice().name,
+                language=self._selected_language(),
                 punctuation=self.settings.punctuation.value,
             )
         )
@@ -257,14 +270,28 @@ class SpeechController:
             return f"Rate {self._percent(self.settings.rate)} percent"
         if option is SpeechOption.VOLUME:
             return f"Volume {self._percent(self.settings.volume)} percent"
+        if option is SpeechOption.LANGUAGE:
+            return f"Language {self._selected_language()}"
         if option is SpeechOption.VOICE:
-            return f"Voice {self._voices[self.settings.voice_index]}"
+            voice = self._selected_voice()
+            return f"Voice {voice.variant or voice.name}"
         if option is SpeechOption.PUNCTUATION:
             return f"Punctuation {self.settings.punctuation.value}"
         if option is SpeechOption.VERBOSITY:
             return f"Verbosity {self.settings.verbosity.value}"
 
         raise ValueError(f"Unknown speech option: {option}")
+
+    def _selected_language(self) -> str:
+        return self._languages[self.settings.language_index]
+
+    def _voices_for_selected_language(self) -> tuple[SynthesisVoice, ...]:
+        language = self._selected_language()
+        return tuple(voice for voice in self._voices if voice.language == language)
+
+    def _selected_voice(self) -> SynthesisVoice:
+        voices = self._voices_for_selected_language()
+        return voices[self.settings.voice_index % len(voices)]
 
     @staticmethod
     def _cycle(items: tuple[T, ...], current: T, direction: int) -> T:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from audioability.speech.controller import SpeechController, SpeechOption
-from audioability.speech.drivers import SpeechConfiguration
+from audioability.speech.drivers import SpeechConfiguration, SynthesisVoice
 
 
 class StoppableSpeechDriver:
@@ -169,11 +169,20 @@ def test_non_capslock_arrow_is_not_handled() -> None:
 
 def test_setting_changes_are_applied_to_configurable_driver() -> None:
     speech = ConfigurableSpeechDriver()
-    controller = SpeechController(speech, voices=("default", "ava"))
+    controller = SpeechController(
+        speech,
+        voices=(
+            SynthesisVoice("English+default", "en", "default"),
+            SynthesisVoice("English+Ava", "en", "Ava"),
+        ),
+    )
 
-    assert speech.configurations == [SpeechConfiguration()]
+    assert speech.configurations == [
+        SpeechConfiguration(voice="English+default", language="en")
+    ]
 
     controller.handle_modifier_arrow("capslock", "up", announce=False)
+    controller.handle_modifier_arrow("capslock", "right", announce=False)
     controller.handle_modifier_arrow("capslock", "right", announce=False)
     controller.handle_modifier_arrow("capslock", "right", announce=False)
     controller.handle_modifier_arrow("capslock", "up", announce=False)
@@ -181,6 +190,31 @@ def test_setting_changes_are_applied_to_configurable_driver() -> None:
     assert speech.configurations[-1] == SpeechConfiguration(
         rate=1.1,
         volume=1.0,
-        voice="ava",
+        voice="English+Ava",
+        language="en",
         punctuation="some",
     )
+
+
+def test_language_and_voice_are_selected_separately() -> None:
+    speech = ConfigurableSpeechDriver()
+    controller = SpeechController(
+        speech,
+        voices=(
+            SynthesisVoice("English+Alex", "en", "Alex"),
+            SynthesisVoice("English+Annie", "en", "Annie"),
+            SynthesisVoice("French+Alex", "fr", "Alex"),
+        ),
+    )
+
+    controller.handle_modifier_arrow("capslock", "right")
+    controller.handle_modifier_arrow("capslock", "right")
+    assert controller.selected_option.value == SpeechOption.LANGUAGE.value
+    controller.handle_modifier_arrow("capslock", "up")
+    assert speech.messages[-1] == "Language fr"
+
+    controller.handle_modifier_arrow("capslock", "right")
+    assert controller.selected_option.value == SpeechOption.VOICE.value
+    assert speech.messages[-1] == "Voice Alex"
+    assert speech.configurations[-1].language == "fr"
+    assert speech.configurations[-1].voice == "French+Alex"
