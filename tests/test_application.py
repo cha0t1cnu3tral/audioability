@@ -288,6 +288,43 @@ def test_editable_focus_auto_enters_focus_mode_and_escape_returns_to_browse() ->
     assert speech.messages == ["Search entry editable", "Browse mode"]
 
 
+def test_enter_on_virtual_editable_object_moves_system_focus() -> None:
+    speech = NullSpeechDriver()
+    focus_calls = 0
+
+    def focus_entry() -> bool:
+        nonlocal focus_calls
+        focus_calls += 1
+        return True
+
+    entry = AccessibleNode(
+        name="Name",
+        role="entry",
+        state=frozenset({"editable"}),
+        focus_action=focus_entry,
+    )
+    first = AccessibleNode(name="Heading", role="label")
+    root = AccessibleNode(name="Window", role="frame", children=(first, entry))
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app._speak_focused_tree(root, first)
+    app.handle_key("Down")
+
+    assert app.handle_key("Enter") is True
+    assert focus_calls == 1
+    assert_interaction_mode(app, InteractionMode.FOCUS)
+
+
+def test_inserted_text_is_spoken_in_focus_mode() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app.interaction_mode = InteractionMode.FOCUS
+
+    app._speak_typed_text("h")
+    app._speak_typed_text(" ")
+
+    assert speech.messages == ["h", "space"]
+
+
 def test_manual_focus_mode_passes_plain_keys_to_application() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
@@ -399,7 +436,9 @@ def test_documented_command_shortcuts_are_handled() -> None:
     assert app.handle_key("s", ("Caps_Lock",)) is True
     assert app.handle_key("n", ("Caps_Lock",)) is True
     assert app.handle_key("1", ("Caps_Lock",)) is True
+    assert app.handle_key("1", ("Caps_Lock",)) is True
     assert app.handle_key("F2", ("Caps_Lock",)) is True
+    assert app.handle_key("x") is False
     assert app.handle_key("q", ("Caps_Lock",)) is True
     assert app.handle_key("Shift_L") is True
 
@@ -408,8 +447,9 @@ def test_documented_command_shortcuts_are_handled() -> None:
     assert speech.messages[0] == "Speech mode on-demand"
     assert speech.messages[1].startswith("Commands. control: stop current speech")
     assert speech.messages[2:] == [
-        "Input help",
-        "capslock+f2 send the next key directly to the app",
+        "Input help on",
+        "Input help off",
+        "Pass next key",
         "Audioability exiting",
     ]
 
@@ -447,7 +487,7 @@ def test_pass_next_key_lets_one_key_through() -> None:
     ]
 
 
-def test_input_help_announces_next_shortcut_without_running_it() -> None:
+def test_input_help_stays_active_until_shortcut_is_pressed_again() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
     app._speak_focused_node(AccessibleNode(name="Search", role="entry"))
@@ -455,11 +495,17 @@ def test_input_help_announces_next_shortcut_without_running_it() -> None:
     assert app.handle_key("1", ("Caps_Lock",)) is True
     assert app.handle_key("Caps_Lock") is True
     assert app.handle_key("Tab", ("Caps_Lock",)) is True
+    assert app.handle_key("x") is True
+    assert app.handle_key("1", ("Caps_Lock",)) is True
+    assert app.handle_key("Tab", ("Caps_Lock",)) is True
 
     assert speech.messages == [
         "Search entry",
-        "Input help",
+        "Input help on",
         "capslock+tab read the currently focused control",
+        "Unassigned",
+        "Input help off",
+        "Search entry",
     ]
 
 

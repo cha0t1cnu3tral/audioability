@@ -364,6 +364,65 @@ def test_atspi_backend_exposes_default_action_activation() -> None:
     assert activated_indexes == [0]
 
 
+def test_atspi_backend_exposes_component_focus_action() -> None:
+    focus_calls = 0
+    nodes: list[AccessibleNode] = []
+    backend = AtSpiAccessibilityBackend(on_focus=nodes.append)
+
+    def grab_focus() -> bool:
+        nonlocal focus_calls
+        focus_calls += 1
+        return True
+
+    source = SimpleNamespace(
+        name="Editor",
+        description="",
+        getRoleName=lambda: "text",
+        queryComponent=lambda: SimpleNamespace(grabFocus=grab_focus),
+    )
+
+    backend._handle_event(SimpleNamespace(source=source))
+
+    assert nodes[0].focus() is True
+    assert focus_calls == 1
+
+
+def test_atspi_backend_reports_inserted_text() -> None:
+    inserted: list[str] = []
+    backend = AtSpiAccessibilityBackend(on_text_insert=inserted.append)
+    source = SimpleNamespace(getRoleName=lambda: "text")
+
+    backend._handle_event(
+        SimpleNamespace(
+            type="object:text-changed:insert",
+            source=source,
+            detail1=2,
+            detail2=1,
+            any_data="x",
+        )
+    )
+
+    assert inserted == ["x"]
+
+
+def test_atspi_backend_masks_inserted_password_text() -> None:
+    inserted: list[str] = []
+    backend = AtSpiAccessibilityBackend(on_text_insert=inserted.append)
+    source = SimpleNamespace(getRoleName=lambda: "password text")
+
+    backend._handle_event(
+        SimpleNamespace(
+            type="object:text-changed:insert",
+            source=source,
+            detail1=0,
+            detail2=2,
+            any_data="hi",
+        )
+    )
+
+    assert inserted == ["star star"]
+
+
 def test_atspi_backend_reads_children_from_indexable_container() -> None:
     nodes: list[AccessibleNode] = []
     backend = AtSpiAccessibilityBackend(on_focus=nodes.append)

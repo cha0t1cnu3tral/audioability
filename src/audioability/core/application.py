@@ -58,7 +58,7 @@ class ScreenReaderApplication:
         self.current_focus: AccessibleNode | None = None
         self.object_navigator = ObjectNavigator()
         self.quit_requested = False
-        self._input_help_waiting = False
+        self._input_help_active = False
         self._pass_next_key = False
         self.interaction_mode = InteractionMode.BROWSE
         self._focus_mode_auto_entered = False
@@ -105,6 +105,7 @@ class ScreenReaderApplication:
             else AtSpiAccessibilityBackend(
                 on_focus_tree=self._speak_focused_tree,
                 on_key=self.handle_key,
+                on_text_insert=self._speak_typed_text,
             )
         )
 
@@ -129,8 +130,9 @@ class ScreenReaderApplication:
         if command.name is CommandName.OPEN_MENU:
             return self._speak_command("Commands. " + ". ".join(command_binding_lines()))
         if command.name is CommandName.INPUT_HELP:
-            self._input_help_waiting = True
-            return self._speak_command("Input help")
+            self._input_help_active = not self._input_help_active
+            state = "on" if self._input_help_active else "off"
+            return self._speak_command(f"Input help {state}")
         if command.name is CommandName.PASS_NEXT_KEY:
             self._pass_next_key = True
             pass_next_key = getattr(self.accessibility_backend, "pass_next_key", None)
@@ -166,10 +168,12 @@ class ScreenReaderApplication:
             self._pass_next_key = False
             return False
 
-        if self._input_help_waiting:
+        if self._input_help_active:
             if is_modifier_key(key):
                 return True
-            self._input_help_waiting = False
+            help_command = command_for_gesture((*modifiers, key))
+            if help_command is not None and help_command.name is CommandName.INPUT_HELP:
+                return self.handle_command(help_command)
             return self.speak_input_help(key, modifiers)
 
         if self._handle_modifier_shortcut(key, modifiers):
@@ -334,11 +338,10 @@ class ScreenReaderApplication:
         if self.interaction_mode is InteractionMode.FOCUS:
             return False
 
-        if (
-            normalized_key in {"enter", "space"}
-            and self.current_focus is not None
-            and self._requires_focus_mode(self.current_focus)
-        ):
+        target = self.object_navigator.current or self.current_focus
+        if normalized_key in {"enter", "space"} and target and self._requires_focus_mode(target):
+            focused = target.focus()
+            logger.debug("editable_focus_requested node=%r result=%s", target, focused)
             self.interaction_mode = InteractionMode.FOCUS
             self._focus_mode_auto_entered = True
             return self._speak_command("Focus mode")
@@ -348,6 +351,13 @@ class ScreenReaderApplication:
             return False
 
         return self.navigate_object(browse_action)
+
+    def _speak_typed_text(self, text: str) -> None:
+        if self.interaction_mode is not InteractionMode.FOCUS:
+            return
+
+        spoken = {" ": "space", "\n": "enter", "\t": "tab"}.get(text, text)
+        self._speak_auto(spoken)
 
     @staticmethod
     def _requires_focus_mode(node: AccessibleNode) -> bool:

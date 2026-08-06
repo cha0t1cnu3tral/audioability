@@ -76,10 +76,14 @@ class AtSpiAccessibilityBackend:
     def __init__(
         self,
         *,
-        event_types: Sequence[str] = ("object:state-changed:focused",),
+        event_types: Sequence[str] = (
+            "object:state-changed:focused",
+            "object:text-changed:insert",
+        ),
         on_focus: Callable[[AccessibleNode], None] | None = None,
         on_focus_tree: Callable[[AccessibleNode, AccessibleNode], None] | None = None,
         on_key: Callable[[str, tuple[str, ...]], bool] | None = None,
+        on_text_insert: Callable[[str], None] | None = None,
         event_filter: FocusEventFilter | None = None,
         max_text_length: int = 240,
         max_tree_depth: int = 6,
@@ -90,6 +94,7 @@ class AtSpiAccessibilityBackend:
         self.on_focus = on_focus
         self.on_focus_tree = on_focus_tree
         self.on_key = on_key
+        self.on_text_insert = on_text_insert
         self.event_filter = event_filter or FocusEventFilter()
         self.max_text_length = max_text_length
         self.max_tree_depth = max_tree_depth
@@ -142,6 +147,11 @@ class AtSpiAccessibilityBackend:
         pyatspi.Registry.stop()
 
     def _handle_event(self, event: Any) -> None:
+        event_type = str(getattr(event, "type", ""))
+        if "text-changed:insert" in event_type:
+            self._handle_text_insert(event)
+            return
+
         if self.on_focus is None and self.on_focus_tree is None:
             return
 
@@ -571,6 +581,7 @@ class AtSpiAccessibilityBackend:
             child_count=child_count,
             children=self._read_children(source, child_count, depth=depth),
             activation=self._read_activation(source),
+            focus_action=self._read_focus_action(source),
         )
 
     def _read_focus_tree(
@@ -741,6 +752,43 @@ class AtSpiAccessibilityBackend:
             return self._safe_call(do_action, 0) is True
 
         return activate
+
+    def _read_focus_action(self, source: Any) -> Callable[[], bool] | None:
+        component_interface = self._query_interface(source, "queryComponent")
+        if component_interface is None:
+            return None
+
+        grab_focus = getattr(component_interface, "grabFocus", None)
+        if not callable(grab_focus):
+            return None
+
+        def focus() -> bool:
+            return self._safe_call(grab_focus) is True
+
+        return focus
+
+    def _handle_text_insert(self, event: Any) -> None:
+        if self.on_text_insert is None:
+            return
+
+        source = getattr(event, "source", None)
+        role = self._read_role(source).casefold()
+        length = getattr(event, "detail2", 0)
+        if "password" in role:
+            text = " ".join("star" for _ in range(max(length if isinstance(length, int) else 1, 1)))
+        else:
+            text = getattr(event, "any_data", "")
+            if not isinstance(text, str) or not text:
+                offset = getattr(event, "detail1", 0)
+                text_interface = self._query_interface(source, "queryText")
+                get_text = getattr(text_interface, "getText", None)
+                if isinstance(offset, int) and isinstance(length, int) and callable(get_text):
+                    value = self._safe_call(get_text, offset, offset + length)
+                    text = value if isinstance(value, str) else ""
+
+        if text:
+            logger.debug("text_insert text=%r role=%r", text, role)
+            self.on_text_insert(text)
 
     def _read_state(self, source: Any) -> frozenset[str]:
         state_set = self._safe_call(getattr(source, "getState", None))

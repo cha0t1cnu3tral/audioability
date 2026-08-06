@@ -17,9 +17,16 @@ class AccessibleNode:
     child_count: int = 0
     children: tuple[AccessibleNode, ...] = ()
     activation: Callable[[], bool] | None = field(default=None, repr=False, compare=False)
+    focus_action: Callable[[], bool] | None = field(default=None, repr=False, compare=False)
 
     def activate(self) -> bool:
         if self.activation is None:
             return False
 
         return self.activation()
+
+    def focus(self) -> bool:
+        if self.focus_action is None:
+            return False
+
+        return self.focus_action()
