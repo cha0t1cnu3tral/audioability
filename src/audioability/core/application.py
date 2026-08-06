@@ -119,6 +119,7 @@ class ScreenReaderApplication:
                 on_focus_tree=self._speak_focused_tree,
                 on_key=self.handle_key,
                 on_text_insert=self._speak_typed_text,
+                on_state_change=self._speak_state_change,
             )
         )
 
@@ -353,12 +354,35 @@ class ScreenReaderApplication:
             self._speak_auto(text)
 
     def _speak_focused_tree(self, root: AccessibleNode, focused: AccessibleNode) -> None:
-        logger.debug("focus_tree focused=%r root=%r", focused, root)
+        logger.debug(
+            "focus_tree root_name=%r root_role=%r focused_name=%r focused_role=%r",
+            root.name,
+            root.role,
+            focused.name,
+            focused.role,
+        )
         self.current_focus = focused
         self.object_navigator.set_root(root)
         self.object_navigator.set_focus(focused)
         self._sync_interaction_mode_for_focus(focused)
         text = self._focused_node_text(focused)
+        if text:
+            self._speak_auto(text)
+
+    def _speak_state_change(
+        self,
+        node: AccessibleNode,
+        state_name: str,
+        enabled: bool,
+    ) -> None:
+        logger.debug(
+            "state_change name=%r role=%r state=%s enabled=%s",
+            node.name,
+            node.role,
+            state_name,
+            enabled,
+        )
+        text = self._focused_node_text(node)
         if text:
             self._speak_auto(text)
 

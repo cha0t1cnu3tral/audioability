@@ -238,6 +238,9 @@ class ObjectNavigator:
         return None
 
     def _flatten(self, node: AccessibleNode) -> tuple[AccessibleNode, ...]:
+        states = {state.casefold().replace("-", " ") for state in node.state}
+        if "visible" in states and "showing" not in states:
+            return ()
         descendants = tuple(child for item in node.children for child in self._flatten(item))
         return (node, *descendants)
 

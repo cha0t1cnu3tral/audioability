@@ -31,6 +31,49 @@ def test_object_navigator_moves_through_flattened_tree() -> None:
     assert navigator.run(ObjectNavigationAction.MOVE_TO_PREVIOUS_FLAT).node == group
 
 
+def test_object_navigator_skips_non_showing_subtrees() -> None:
+    hidden_button = AccessibleNode(
+        "Hidden",
+        "button",
+        state=frozenset({"visible", "enabled"}),
+    )
+    hidden_page = AccessibleNode(
+        "Inactive page contents",
+        "panel",
+        state=frozenset({"visible", "enabled"}),
+        children=(hidden_button,),
+    )
+    shown_button = AccessibleNode(
+        "Shown",
+        "button",
+        state=frozenset({"visible", "showing", "enabled"}),
+    )
+    root = AccessibleNode("Window", "frame", children=(hidden_page, shown_button))
+    navigator = ObjectNavigator(root)
+
+    assert navigator.run(ObjectNavigationAction.MOVE_TO_NEXT_FLAT).node is shown_button
+
+
+def test_object_navigator_does_not_activate_disabled_control() -> None:
+    activated = False
+
+    def activate() -> bool:
+        nonlocal activated
+        activated = True
+        return True
+
+    button = AccessibleNode(
+        "Unavailable",
+        "button",
+        state=frozenset({"disabled"}),
+        activation=activate,
+    )
+    result = ObjectNavigator(button).run(ObjectNavigationAction.ACTIVATE_CURRENT)
+
+    assert result.handled is False
+    assert activated is False
+
+
 def test_object_navigator_reports_focus_and_current_object() -> None:
     first = AccessibleNode(name="First", role="button")
     second = AccessibleNode(name="Second", role="button")

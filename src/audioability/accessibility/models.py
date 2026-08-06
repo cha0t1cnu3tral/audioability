@@ -21,7 +21,7 @@ class AccessibleNode:
     focus_action: Callable[[], bool] | None = field(default=None, repr=False, compare=False)
 
     def activate(self) -> bool:
-        if self.activation is None:
+        if self.activation is None or "disabled" in self.state:
             return False
 
         return self.activation()

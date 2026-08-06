@@ -80,6 +80,10 @@ class AtSpiAccessibilityBackend:
         *,
         event_types: Sequence[str] = (
             "object:state-changed:focused",
+            "object:state-changed:checked",
+            "object:state-changed:pressed",
+            "object:state-changed:selected",
+            "object:state-changed:expanded",
             "object:active-descendant-changed",
             "object:text-changed:insert",
         ),
@@ -87,6 +91,7 @@ class AtSpiAccessibilityBackend:
         on_focus_tree: Callable[[AccessibleNode, AccessibleNode], None] | None = None,
         on_key: Callable[[str, tuple[str, ...]], bool] | None = None,
         on_text_insert: Callable[[str], None] | None = None,
+        on_state_change: Callable[[AccessibleNode, str, bool], None] | None = None,
         event_filter: FocusEventFilter | None = None,
         max_text_length: int = 240,
         max_tree_depth: int = 6,
@@ -98,6 +103,7 @@ class AtSpiAccessibilityBackend:
         self.on_focus_tree = on_focus_tree
         self.on_key = on_key
         self.on_text_insert = on_text_insert
+        self.on_state_change = on_state_change
         self.event_filter = event_filter or FocusEventFilter()
         self.max_text_length = max_text_length
         self.max_tree_depth = max_tree_depth
@@ -159,6 +165,10 @@ class AtSpiAccessibilityBackend:
             self._handle_text_insert(event)
             return
 
+        if "state-changed:" in event_type and "state-changed:focused" not in event_type:
+            self._handle_state_change(event, event_type)
+            return
+
         if self.on_focus is None and self.on_focus_tree is None:
             return
 
@@ -166,7 +176,13 @@ class AtSpiAccessibilityBackend:
         if "active-descendant-changed" in event_type:
             source = self._read_active_descendant(event) or source
         node = self._read_node(source, depth=self.max_tree_depth)
-        logger.debug("atspi_event type=%r node=%r", getattr(event, "type", None), node)
+        logger.debug(
+            "atspi_event type=%r name=%r role=%r state=%r",
+            getattr(event, "type", None),
+            node.name,
+            node.role,
+            sorted(node.state),
+        )
         if not self.event_filter.accepts(event, node):
             logger.debug("atspi_event_rejected type=%r", getattr(event, "type", None))
             return
@@ -656,6 +672,13 @@ class AtSpiAccessibilityBackend:
             if parent is None:
                 break
 
+            if self._read_role(parent).casefold() in {
+                "application",
+                "desktop frame",
+                "desktop",
+            }:
+                break
+
             index = self._read_index_in_parent(root, parent)
             if index is None:
                 break
@@ -689,10 +712,19 @@ class AtSpiAccessibilityBackend:
 
         child_count = self._read_child_count(parent)
         for index in range(min(child_count, self.max_children_per_node)):
-            if self._read_child(parent, index) is source:
+            if self._same_accessible(self._read_child(parent, index), source):
                 return index
 
         return None
+
+    @staticmethod
+    def _same_accessible(left: Any, right: Any) -> bool:
+        if left is right:
+            return True
+        try:
+            return bool(left == right)
+        except Exception:
+            return False
 
     @staticmethod
     def _node_at_path(node: AccessibleNode, path: tuple[int, ...]) -> AccessibleNode | None:
@@ -852,6 +884,22 @@ class AtSpiAccessibilityBackend:
         if text:
             logger.debug("text_insert text=%r role=%r", text, role)
             self.on_text_insert(text)
+
+    def _handle_state_change(self, event: Any, event_type: str) -> None:
+        if self.on_state_change is None:
+            return
+
+        node = self._read_node(getattr(event, "source", None), depth=1)
+        state_name = event_type.rsplit(":", 1)[-1].strip().casefold()
+        enabled = bool(getattr(event, "detail1", 0))
+        logger.debug(
+            "atspi_state_change name=%r role=%r state=%s enabled=%s",
+            node.name,
+            node.role,
+            state_name,
+            enabled,
+        )
+        self.on_state_change(node, state_name, enabled)
 
     def _read_state(self, source: Any) -> frozenset[str]:
         state_set = self._safe_call(getattr(source, "getState", None))

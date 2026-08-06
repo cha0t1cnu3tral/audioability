@@ -434,6 +434,44 @@ def test_atspi_backend_reports_inserted_text() -> None:
     assert inserted == ["x"]
 
 
+def test_atspi_backend_reports_control_state_changes_without_focus_dispatch() -> None:
+    focus_nodes: list[AccessibleNode] = []
+    changes: list[tuple[AccessibleNode, str, bool]] = []
+    backend = AtSpiAccessibilityBackend(
+        on_focus=focus_nodes.append,
+        on_state_change=lambda node, state, enabled: changes.append(
+            (node, state, enabled)
+        ),
+    )
+    source = SimpleNamespace(
+        name="Notifications",
+        description="",
+        getRoleName=lambda: "check box",
+        getState=lambda: FakeStateSet("checked", "enabled", "showing", "visible"),
+    )
+
+    backend._handle_event(
+        SimpleNamespace(
+            type="object:state-changed:checked",
+            source=source,
+            detail1=1,
+        )
+    )
+
+    assert focus_nodes == []
+    assert changes == [
+        (
+            AccessibleNode(
+                "Notifications",
+                "check box",
+                state=frozenset({"checked", "enabled", "showing", "visible"}),
+            ),
+            "checked",
+            True,
+        )
+    ]
+
+
 def test_atspi_backend_reports_active_tree_descendant() -> None:
     nodes: list[AccessibleNode] = []
     backend = AtSpiAccessibilityBackend(on_focus=nodes.append)
@@ -546,6 +584,24 @@ def test_atspi_backend_dispatches_focus_tree_with_focused_node() -> None:
         ),
     )
     assert focused == root.children[0].children[0]
+
+
+def test_atspi_backend_stops_focus_tree_at_top_level_window() -> None:
+    focus_events: list[tuple[AccessibleNode, AccessibleNode]] = []
+    focused_source = FakeTreeAccessible(name="Save", role="button")
+    window_source = FakeTreeAccessible(focused_source, name="Editor", role="frame")
+    application_source = FakeTreeAccessible(window_source, name="Editor app", role="application")
+    FakeTreeAccessible(application_source, name="Desktop", role="desktop frame")
+    backend = AtSpiAccessibilityBackend(
+        on_focus_tree=lambda root, focused: focus_events.append((root, focused))
+    )
+
+    backend._handle_event(SimpleNamespace(source=focused_source, detail1=1))
+
+    root, focused = focus_events[0]
+    assert root.name == "Editor"
+    assert root.role == "frame"
+    assert focused.name == "Save"
 
 
 def test_atspi_backend_dispatches_key_events_with_pressed_modifiers() -> None:
