@@ -64,6 +64,7 @@ sudo apt install -y \
   python3-dev \
   python3-gi \
   python3-pyatspi \
+  python3-speechd \
   python3-venv \
   speech-dispatcher
 ```

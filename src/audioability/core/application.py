@@ -51,7 +51,10 @@ class ScreenReaderApplication:
         self.speech_driver = speech_driver or (
             NullSpeechDriver() if dry_run else SpeechDispatcherDriver()
         )
-        self.speech_controller = SpeechController(self.speech_driver)
+        available_voices = getattr(self.speech_driver, "available_voices", None)
+        voices = available_voices() if callable(available_voices) else ("default",)
+        logger.info("speech_voices_discovered count=%d", len(voices))
+        self.speech_controller = SpeechController(self.speech_driver, voices=voices)
         self.current_focus: AccessibleNode | None = None
         self.object_navigator = ObjectNavigator()
         self.quit_requested = False
@@ -147,7 +150,7 @@ class ScreenReaderApplication:
         if command.name is CommandName.REPEAT_LAST:
             return self.repeat_last_spoken()
         if command.name is CommandName.PAUSE_SPEECH:
-            return self._speak_command("Pause speech unavailable")
+            return self.speech_controller.toggle_pause()
         if command.name is CommandName.CYCLE_SPEECH_MODE:
             return self.cycle_speech_mode()
         if command.name is CommandName.STOP_SPEECH:

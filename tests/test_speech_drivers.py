@@ -86,3 +86,38 @@ def test_speech_dispatcher_falls_back_when_process_cannot_start(
     SpeechDispatcherDriver().speak("Fallback message")
 
     assert capsys.readouterr().out == "[speech fallback] Fallback message\n"
+
+
+def test_speech_dispatcher_uses_native_client_for_pause_resume() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class Client:
+        def pause(self, scope: str) -> None:
+            calls.append(("pause", scope))
+
+        def resume(self, scope: str) -> None:
+            calls.append(("resume", scope))
+
+    driver = SpeechDispatcherDriver()
+    driver._client = Client()
+    driver._client_checked = True
+
+    assert driver.pause() is True
+    assert driver.resume() is True
+    assert calls == [("pause", "all"), ("resume", "all")]
+
+
+def test_speech_dispatcher_lists_all_native_synthesis_voices() -> None:
+    class Client:
+        def list_synthesis_voices(self) -> list[tuple[str, str, str]]:
+            return [
+                ("English+Alex", "en", "Alex"),
+                ("English+Annie", "en", "Annie"),
+                ("English+Alex", "en", "Alex"),
+            ]
+
+    driver = SpeechDispatcherDriver()
+    driver._client = Client()
+    driver._client_checked = True
+
+    assert driver.available_voices() == ("English+Alex", "English+Annie")

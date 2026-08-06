@@ -29,6 +29,21 @@ class ConfigurableSpeechDriver(StoppableSpeechDriver):
         self.configurations.append(configuration)
 
 
+class PausableSpeechDriver(StoppableSpeechDriver):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pause_count = 0
+        self.resume_count = 0
+
+    def pause(self) -> bool:
+        self.pause_count += 1
+        return True
+
+    def resume(self) -> bool:
+        self.resume_count += 1
+        return True
+
+
 def test_speak_tracks_last_message_and_skips_immediate_duplicates() -> None:
     now = 10.0
     speech = StoppableSpeechDriver()
@@ -73,6 +88,29 @@ def test_stop_delegates_to_driver_when_supported() -> None:
     assert controller.stop() is True
 
     assert speech.stopped is True
+
+
+def test_toggle_pause_pauses_and_resumes_speech() -> None:
+    speech = PausableSpeechDriver()
+    controller = SpeechController(speech)
+
+    assert controller.toggle_pause() is True
+    assert controller.paused is True
+    assert controller.toggle_pause() is True
+    assert controller.paused is False
+
+    assert speech.pause_count == 1
+    assert speech.resume_count == 1
+
+
+def test_new_speech_clears_paused_state() -> None:
+    speech = PausableSpeechDriver()
+    controller = SpeechController(speech)
+    controller.toggle_pause()
+
+    controller.speak("New message")
+
+    assert controller.paused is False
 
 
 def test_capslock_left_and_right_navigate_options() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 class SpeechDriver(Protocol):
@@ -43,6 +43,8 @@ class SpeechDispatcherDriver:
     def __init__(self, executable: str = "spd-say") -> None:
         self.executable = executable
         self.configuration = SpeechConfiguration()
+        self._client: Any | None = None
+        self._client_checked = False
 
     def configure(self, configuration: SpeechConfiguration) -> None:
         self.configuration = configuration
@@ -71,6 +73,73 @@ class SpeechDispatcherDriver:
         resolved_executable = shutil.which(self.executable)
         if resolved_executable is not None:
             self._run([resolved_executable, "--cancel"])
+
+    def pause(self) -> bool:
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            client.pause("all")
+        except Exception:
+            return False
+        return True
+
+    def resume(self) -> bool:
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            client.resume("all")
+        except Exception:
+            return False
+        return True
+
+    def available_voices(self) -> tuple[str, ...]:
+        client = self._get_client()
+        if client is not None:
+            try:
+                voices = client.list_synthesis_voices()
+            except Exception:
+                voices = ()
+            names = tuple(
+                str(voice[0]).strip()
+                for voice in voices
+                if isinstance(voice, (tuple, list)) and voice and str(voice[0]).strip()
+            )
+            if names:
+                return tuple(dict.fromkeys(names))
+
+        resolved_executable = shutil.which(self.executable)
+        if resolved_executable is None:
+            return ("default",)
+        try:
+            result = subprocess.run(
+                [resolved_executable, "--list-synthesis-voices"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError:
+            return ("default",)
+
+        names = tuple(
+            line[:42].strip()
+            for line in result.stdout.splitlines()[1:]
+            if line[:42].strip()
+        )
+        return tuple(dict.fromkeys(names)) or ("default",)
+
+    def _get_client(self) -> Any | None:
+        if self._client_checked:
+            return self._client
+        self._client_checked = True
+        try:
+            import speechd  # type: ignore[import-not-found, import-untyped, unused-ignore]
+
+            self._client = speechd.SSIPClient("audioability")
+        except Exception:
+            self._client = None
+        return self._client
 
     def _rate_argument(self) -> int:
         rate = self._clamp(self.configuration.rate, 0.5, 2.0)

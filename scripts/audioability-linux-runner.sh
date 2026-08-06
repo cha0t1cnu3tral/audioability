@@ -60,6 +60,7 @@ install_system_packages() {
       python3 \
       python3-gi \
       python3-pyatspi \
+      python3-speechd \
       python3-venv \
       speech-dispatcher
     return
@@ -73,6 +74,7 @@ install_system_packages() {
       python3-gobject \
       python3-virtualenv \
       pyatspi \
+      python3-speechd \
       speech-dispatcher
     return
   fi
@@ -96,6 +98,7 @@ install_system_packages() {
       python3 \
       python3-gobject \
       python3-pyatspi \
+      python3-speechd \
       speech-dispatcher
     return
   fi

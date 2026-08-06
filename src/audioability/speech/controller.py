@@ -53,6 +53,15 @@ class StoppableSpeechDriver(Protocol):
         """Stop speech that is currently being spoken."""
 
 
+@runtime_checkable
+class PausableSpeechDriver(Protocol):
+    def pause(self) -> bool:
+        """Pause speech that is currently being spoken."""
+
+    def resume(self) -> bool:
+        """Resume paused speech."""
+
+
 class SpeechController:
     """Stateful speech controls for speaking, repeating, and settings changes."""
 
@@ -81,6 +90,7 @@ class SpeechController:
         self._last_spoken_text: str | None = None
         self._last_spoken_at: float | None = None
         self._selected_option_index = 0
+        self._paused = False
         self.settings = SpeechSettings()
         self._sync_driver_configuration()
 
@@ -104,6 +114,7 @@ class SpeechController:
 
         if isinstance(self._driver, StoppableSpeechDriver):
             self._driver.stop()
+        self._paused = False
         logger.debug("speech_dispatch text=%r settings=%r", cleaned_text, self.settings)
         self._driver.speak(cleaned_text)
         self._last_spoken_text = cleaned_text
@@ -115,8 +126,30 @@ class SpeechController:
             return False
 
         self._driver.stop()
+        self._paused = False
         logger.debug("speech_stopped")
         return True
+
+    def toggle_pause(self) -> bool:
+        if not isinstance(self._driver, PausableSpeechDriver):
+            return False
+
+        if self._paused:
+            handled = self._driver.resume()
+            if handled:
+                self._paused = False
+                logger.debug("speech_resumed")
+            return handled
+
+        handled = self._driver.pause()
+        if handled:
+            self._paused = True
+            logger.debug("speech_paused")
+        return handled
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
 
     def repeat_last(self) -> bool:
         if self._last_spoken_text is None:

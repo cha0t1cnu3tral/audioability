@@ -14,6 +14,20 @@ class StoppableSpeechDriver(NullSpeechDriver):
         self.stopped = True
 
 
+class PausableSpeechDriver(StoppableSpeechDriver):
+    def __init__(self) -> None:
+        super().__init__()
+        self.paused = False
+
+    def pause(self) -> bool:
+        self.paused = True
+        return True
+
+    def resume(self) -> bool:
+        self.paused = False
+        return True
+
+
 class StoppableBackend:
     def __init__(self) -> None:
         self.stopped = False
@@ -205,6 +219,16 @@ def test_control_key_interrupts_speech() -> None:
     assert speech.stopped is True
 
 
+def test_shift_toggles_speech_pause_and_resume() -> None:
+    speech = PausableSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+
+    assert app.handle_key("Shift_L") is True
+    assert speech.paused is True
+    assert app.handle_key("Shift_L") is True
+    assert speech.paused is False
+
+
 def test_screen_reader_key_gesture_reads_focus() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
@@ -364,7 +388,7 @@ def test_off_speech_mode_keeps_speech_setting_shortcuts_silent() -> None:
 
 
 def test_documented_command_shortcuts_are_handled() -> None:
-    speech = NullSpeechDriver()
+    speech = PausableSpeechDriver()
     backend = StoppableBackend()
     app = ScreenReaderApplication(
         dry_run=True,
@@ -387,7 +411,6 @@ def test_documented_command_shortcuts_are_handled() -> None:
         "Input help",
         "capslock+f2 send the next key directly to the app",
         "Audioability exiting",
-        "Pause speech unavailable",
     ]
 
 
