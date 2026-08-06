@@ -133,6 +133,7 @@ class AtSpiAccessibilityBackend:
         self._reader_modifier_by_keysym: dict[int, int] = {}
         self._keyboard_captured = False
         self._browse_mode_active = True
+        self._device_grab_refresh_pending = False
         self._last_caret_gesture: tuple[str, tuple[str, ...], float] | None = None
         self._last_device_event: tuple[bool, int, int, int, str] | None = None
         self._last_device_event_at = 0.0
@@ -362,10 +363,45 @@ class AtSpiAccessibilityBackend:
             self._keyboard_atspi is not None
             and self._keyboard_device is not None
             and not self._key_grabs_suspended
+            and not self._device_grab_refresh_pending
         ):
-            self._remove_device_key_grabs(self._keyboard_device)
-            self._register_device_key_grabs(self._keyboard_atspi, self._keyboard_device)
-        logger.info("browse_key_grabs active=%s", active)
+            self._device_grab_refresh_pending = True
+            if not self._schedule_device_key_grab_refresh():
+                self._device_grab_refresh_pending = False
+                logger.error("browse_key_grab_refresh_failed active=%s", active)
+        logger.info(
+            "browse_key_grabs active=%s refresh_pending=%s",
+            active,
+            self._device_grab_refresh_pending,
+        )
+
+    def _schedule_device_key_grab_refresh(self) -> bool:
+        """Apply a grab profile after the current AT-SPI callback returns."""
+
+        try:
+            from gi.repository import (  # type: ignore[import-not-found, unused-ignore]
+                GLib,
+            )
+
+            source_id = GLib.idle_add(self._apply_device_key_grab_profile)
+        except Exception:
+            logger.exception("browse_key_grab_refresh_schedule_error")
+            return False
+        return isinstance(source_id, int) and source_id > 0
+
+    def _apply_device_key_grab_profile(self) -> bool:
+        """Replace device grabs with the profile for the latest interaction mode."""
+
+        self._device_grab_refresh_pending = False
+        atspi = self._keyboard_atspi
+        device = self._keyboard_device
+        if atspi is None or device is None or self._key_grabs_suspended:
+            return False
+
+        self._remove_device_key_grabs(device)
+        self._register_device_key_grabs(atspi, device)
+        logger.info("browse_key_grab_refresh_applied active=%s", self._browse_mode_active)
+        return False
 
     def pass_next_key(self) -> None:
         """Temporarily release command grabs so one complete gesture can pass through."""
@@ -572,6 +608,7 @@ class AtSpiAccessibilityBackend:
         device = self._keyboard_device
         self._keyboard_atspi = None
         self._keyboard_device = None
+        self._device_grab_refresh_pending = False
         self._pressed_modifiers.clear()
         if device is None:
             self._key_grabs_suspended = False

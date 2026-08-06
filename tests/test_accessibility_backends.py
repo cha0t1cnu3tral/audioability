@@ -381,6 +381,58 @@ def test_atspi_backend_uses_browse_specific_key_grabs() -> None:
     assert ("capslock",) in focus_gestures
 
 
+def test_atspi_backend_defers_live_grab_profile_refresh(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    scheduled: list[object] = []
+    backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
+    backend._keyboard_atspi = object()
+    backend._keyboard_device = object()
+    monkeypatch.setattr(
+        backend,
+        "_schedule_device_key_grab_refresh",
+        lambda: scheduled.append(backend._apply_device_key_grab_profile) or True,
+    )
+    monkeypatch.setattr(
+        backend, "_remove_device_key_grabs", lambda device: calls.append("remove")
+    )
+    monkeypatch.setattr(
+        backend,
+        "_register_device_key_grabs",
+        lambda atspi, device: calls.append("register"),
+    )
+
+    backend.set_browse_mode(False)
+
+    assert calls == []
+    assert len(scheduled) == 1
+    callback = scheduled.pop()
+    assert callable(callback)
+    assert callback() is False
+    assert calls == ["remove", "register"]
+    assert backend._device_grab_refresh_pending is False
+
+
+def test_atspi_backend_coalesces_pending_grab_profile_refresh(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    scheduled: list[object] = []
+    backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
+    backend._keyboard_atspi = object()
+    backend._keyboard_device = object()
+    monkeypatch.setattr(
+        backend,
+        "_schedule_device_key_grab_refresh",
+        lambda: scheduled.append(backend._apply_device_key_grab_profile) or True,
+    )
+
+    backend.set_browse_mode(False)
+    backend.set_browse_mode(True)
+
+    assert len(scheduled) == 1
+
+
 def test_atspi_backend_uses_device_watcher_on_pre_260_atspi(
     monkeypatch: MonkeyPatch,
 ) -> None:
