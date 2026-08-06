@@ -158,6 +158,8 @@ def test_atspi_backend_device_listener_supports_global_signals(
     assert (0xFF0D, 0) in device.grabs
     assert (ord("h"), 0) in device.grabs
     assert (ord("h"), 1) in device.grabs
+    assert (0xFFE5, 0) in device.grabs
+    assert (0xFF63, 0) in device.grabs
     initial_grab_count = len(device.grabs)
     assert len(device.grab_callbacks) == initial_grab_count
 
@@ -212,6 +214,37 @@ def test_atspi_backend_only_dispatches_shift_when_used_alone() -> None:
     backend._handle_device_key_released(None, 50, 0xFFE1, 1, "")
 
     assert key_events[-1] == ("shiftl", ("shift",))
+
+
+def test_atspi_backend_clears_stale_standard_modifiers_from_current_mask() -> None:
+    key_events: list[tuple[str, tuple[str, ...]]] = []
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        key_events.append((key, modifiers))
+        return True
+
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
+    backend._pressed_modifiers.update({"alt", "control", "shift"})
+
+    backend._handle_device_key_pressed(None, 53, ord("x"), 0, "x")
+
+    assert key_events == [("x", ())]
+
+
+def test_atspi_backend_clears_stale_modifiers_before_reader_shortcut() -> None:
+    key_events: list[tuple[str, tuple[str, ...]]] = []
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        key_events.append((key, modifiers))
+        return True
+
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
+    backend._pressed_modifiers.add("alt")
+
+    backend._handle_device_key_pressed(None, 66, 0xFFE5, 0, "")
+    backend._handle_device_key_pressed(None, 10, ord("1"), 2, "1")
+
+    assert key_events == [("capslock", ()), ("1", ("capslock",))]
 
 
 def test_atspi_backend_captures_and_releases_keyboard_for_modal_input() -> None:

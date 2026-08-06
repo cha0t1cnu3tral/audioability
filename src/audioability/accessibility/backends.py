@@ -52,6 +52,9 @@ class AtSpiAccessibilityBackend:
     # modifier. Register every combination from AT-SPI's eight-bit legacy
     # modifier mask so screen-reader gestures reach the application.
     _modifier_masks = tuple(range(256))
+    _standard_modifier_names = frozenset(
+        {"shift", "control", "alt", "altgr", "meta", "super"}
+    )
 
     _state_names = (
         "active",
@@ -209,8 +212,8 @@ class AtSpiAccessibilityBackend:
         if not key:
             return False
 
-        modifiers = getattr(event, "modifiers", 0)
-        modifier_mask = modifiers if isinstance(modifiers, int) else 0
+        modifiers = getattr(event, "modifiers", None)
+        modifier_mask = modifiers if isinstance(modifiers, int) else None
         return self._handle_key_transition(
             key,
             pressed=not self._is_key_release_event(event),
@@ -266,8 +269,15 @@ class AtSpiAccessibilityBackend:
         key: str,
         *,
         pressed: bool,
-        modifier_mask: int = 0,
+        modifier_mask: int | None = None,
     ) -> bool:
+        normalized_key = normalize_key(key)
+        if pressed and modifier_mask is not None:
+            reported_modifiers = self._modifier_names_from_mask(modifier_mask)
+            self._pressed_modifiers.difference_update(self._standard_modifier_names)
+            self._pressed_modifiers.update(
+                reported_modifiers.intersection(self._standard_modifier_names)
+            )
         logger.debug(
             "key_transition key=%r pressed=%s modifier_mask=%s pressed_modifiers=%r",
             key,
@@ -276,15 +286,13 @@ class AtSpiAccessibilityBackend:
             sorted(self._pressed_modifiers),
         )
         if not pressed:
-            normalized_key = normalize_key(key)
             handled = False
             if normalized_key in self._deferred_modifier_keys:
-                handled = self._dispatch_key_event(key, modifier_mask)
+                handled = self._dispatch_key_event(key, modifier_mask or 0)
                 self._deferred_modifier_keys.discard(normalized_key)
             self._pressed_modifiers.discard(normalized_key)
             return handled
 
-        normalized_key = normalize_key(key)
         if normalized_key == "shift":
             self._pressed_modifiers.add(normalized_key)
             self._deferred_modifier_keys.add(normalized_key)
@@ -294,7 +302,7 @@ class AtSpiAccessibilityBackend:
             self._deferred_modifier_keys.clear()
 
         grabs_were_suspended = self._key_grabs_suspended
-        handled = self._dispatch_key_event(key, modifier_mask)
+        handled = self._dispatch_key_event(key, modifier_mask or 0)
         if self._tracks_as_modifier(key):
             self._pressed_modifiers.add(normalize_key(key))
         elif grabs_were_suspended:
@@ -614,6 +622,7 @@ class AtSpiAccessibilityBackend:
         )
         gestures.update((key,) for key in browse_keys)
         gestures.update(("shift", key) for key in browse_keys if key not in {"esc"})
+        gestures.update({("capslock",), ("insert",)})
         return tuple(sorted(gestures))
 
     @staticmethod
