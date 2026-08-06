@@ -184,6 +184,28 @@ def test_atspi_backend_prefers_global_device_signals(monkeypatch: MonkeyPatch) -
     assert device.unmapped == [0xFFE5, 0xFF63, 0xFF9E, 0xFFB0]
 
 
+def test_atspi_backend_only_dispatches_shift_when_used_alone() -> None:
+    key_events: list[tuple[str, tuple[str, ...]]] = []
+
+    def on_key(key: str, modifiers: tuple[str, ...]) -> bool:
+        key_events.append((key, modifiers))
+        return True
+
+    backend = AtSpiAccessibilityBackend(on_key=on_key)
+
+    backend._handle_device_key_pressed(None, 50, 0xFFE1, 0, "")
+    backend._handle_device_key_pressed(None, 23, 0xFF09, 1, "")
+    backend._handle_device_key_released(None, 23, 0xFF09, 1, "")
+    backend._handle_device_key_released(None, 50, 0xFFE1, 1, "")
+
+    assert key_events == [("tab", ("shift",))]
+
+    backend._handle_device_key_pressed(None, 50, 0xFFE1, 0, "")
+    backend._handle_device_key_released(None, 50, 0xFFE1, 1, "")
+
+    assert key_events[-1] == ("shiftl", ("shift",))
+
+
 def test_atspi_backend_uses_device_watcher_on_pre_260_atspi(
     monkeypatch: MonkeyPatch,
 ) -> None:

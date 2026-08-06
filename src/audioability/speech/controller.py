@@ -117,6 +117,8 @@ class SpeechController:
             logger.debug("speech_duplicate_suppressed text=%r", cleaned_text)
             return False
 
+        if self._paused and isinstance(self._driver, PausableSpeechDriver):
+            self._driver.resume()
         if isinstance(self._driver, StoppableSpeechDriver):
             self._driver.stop()
         self._paused = False

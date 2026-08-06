@@ -111,6 +111,8 @@ def test_new_speech_clears_paused_state() -> None:
     controller.speak("New message")
 
     assert controller.paused is False
+    assert speech.resume_count == 1
+    assert speech.messages == ["New message"]
 
 
 def test_capslock_left_and_right_navigate_options() -> None:

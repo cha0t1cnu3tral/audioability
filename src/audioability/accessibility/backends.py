@@ -114,6 +114,7 @@ class AtSpiAccessibilityBackend:
         self._last_device_event: tuple[bool, int, int, int, str] | None = None
         self._last_device_event_at = 0.0
         self._last_device_event_handled = False
+        self._deferred_modifier_keys: set[str] = set()
 
     def start(self) -> None:
         try:
@@ -268,8 +269,22 @@ class AtSpiAccessibilityBackend:
             sorted(self._pressed_modifiers),
         )
         if not pressed:
-            self._pressed_modifiers.discard(normalize_key(key))
+            normalized_key = normalize_key(key)
+            handled = False
+            if normalized_key in self._deferred_modifier_keys:
+                handled = self._dispatch_key_event(key, modifier_mask)
+                self._deferred_modifier_keys.discard(normalized_key)
+            self._pressed_modifiers.discard(normalized_key)
+            return handled
+
+        normalized_key = normalize_key(key)
+        if normalized_key == "shift":
+            self._pressed_modifiers.add(normalized_key)
+            self._deferred_modifier_keys.add(normalized_key)
             return False
+
+        if not self._tracks_as_modifier(key):
+            self._deferred_modifier_keys.clear()
 
         grabs_were_suspended = self._key_grabs_suspended
         handled = self._dispatch_key_event(key, modifier_mask)
