@@ -159,7 +159,7 @@ class AtSpiAccessibilityBackend:
                 kind=(pyatspi.KEY_PRESSED_EVENT, pyatspi.KEY_RELEASED_EVENT),
                 synchronous=True,
                 preemptive=True,
-                global_=False,
+                global_=True,
             )
 
         logger.info(
@@ -445,6 +445,13 @@ class AtSpiAccessibilityBackend:
         """Use AT-SPI's global X11/Wayland device API when available."""
 
         atspi = getattr(pyatspi, "Atspi", None)
+        # Before AT-SPI 2.60 a DeviceLegacy grab has a void callback and is
+        # therefore always consumptive. Its grabs also cannot be safely
+        # replaced while the registry loop is running. The classic synchronous
+        # keystroke listener can decide per event whether to consume it, which
+        # is required for editable focus mode.
+        if self._atspi_version(atspi) < (2, 60):
+            return False
         device_type = getattr(atspi, "Device", None)
         if device_type is None:
             return False

@@ -132,6 +132,11 @@ class SpeechController:
         if not isinstance(self._driver, StoppableSpeechDriver):
             return False
 
+        # Speech Dispatcher keeps the client paused after canceling a paused
+        # utterance. Resume first so Ctrl genuinely resets speech and future
+        # messages are audible.
+        if self._paused and isinstance(self._driver, PausableSpeechDriver):
+            self._driver.resume()
         self._driver.stop()
         self._paused = False
         logger.debug("speech_stopped")

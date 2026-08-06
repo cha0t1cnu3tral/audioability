@@ -46,7 +46,7 @@ def test_atspi_backend_fallback_registers_global_keys_for_every_modifier_mask(
             "kind": (1, 2),
             "synchronous": True,
             "preemptive": True,
-            "global_": False,
+            "global_": True,
         }
     ]
 
@@ -433,7 +433,7 @@ def test_atspi_backend_coalesces_pending_grab_profile_refresh(
     assert len(scheduled) == 1
 
 
-def test_atspi_backend_uses_device_watcher_on_pre_260_atspi(
+def test_atspi_backend_uses_consumable_registry_listener_on_pre_260_atspi(
     monkeypatch: MonkeyPatch,
 ) -> None:
     callbacks: list[object] = []
@@ -471,9 +471,9 @@ def test_atspi_backend_uses_device_watcher_on_pre_260_atspi(
     )
     backend = AtSpiAccessibilityBackend(on_key=lambda key, modifiers: True)
 
-    assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is True
+    assert backend._start_device_key_listener(SimpleNamespace(Atspi=fake_atspi)) is False
 
-    assert callbacks == [backend._handle_device_key_event]
+    assert callbacks == []
 
 
 def test_atspi_backend_disconnects_partial_signal_registration(

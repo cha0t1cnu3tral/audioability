@@ -90,6 +90,18 @@ def test_stop_delegates_to_driver_when_supported() -> None:
     assert speech.stopped is True
 
 
+def test_stop_resumes_paused_driver_before_canceling() -> None:
+    speech = PausableSpeechDriver()
+    controller = SpeechController(speech)
+    controller.toggle_pause()
+
+    assert controller.stop() is True
+
+    assert controller.paused is False
+    assert speech.resume_count == 1
+    assert speech.stop_count == 1
+
+
 def test_toggle_pause_pauses_and_resumes_speech() -> None:
     speech = PausableSpeechDriver()
     controller = SpeechController(speech)
