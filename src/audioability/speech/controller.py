@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from audioability.input.commands import is_screen_reader_modifier
 from audioability.speech.drivers import (
@@ -86,12 +86,14 @@ class SpeechController:
         voices: tuple[SynthesisVoice, ...] = (SynthesisVoice("default", "default"),),
         duplicate_window_seconds: float = 0.75,
         clock: Callable[[], float] = time.monotonic,
+        on_settings_changed: Callable[[], None] | None = None,
     ) -> None:
         self._driver = driver
         self._voices = voices or (SynthesisVoice("default", "default"),)
         self._languages = tuple(dict.fromkeys(voice.language for voice in self._voices))
         self._duplicate_window_seconds = duplicate_window_seconds
         self._clock = clock
+        self._on_settings_changed = on_settings_changed
         self._last_spoken_text: str | None = None
         self._last_spoken_at: float | None = None
         self._selected_option_index = 0
@@ -100,6 +102,53 @@ class SpeechController:
             language_index=self._preferred_english_language_index()
         )
         self._sync_driver_configuration()
+
+    def restore_settings(self, saved: Mapping[str, object]) -> None:
+        """Restore durable preferences, ignoring values from older versions."""
+
+        rate = self._number(saved.get("rate"), self.settings.rate)
+        volume = self._number(saved.get("volume"), self.settings.volume)
+        punctuation = self._enum_value(PunctuationMode, saved.get("punctuation"))
+        verbosity = self._enum_value(VerbosityMode, saved.get("verbosity"))
+        language = saved.get("language")
+        voice = saved.get("voice")
+
+        language_index = self.settings.language_index
+        if isinstance(language, str) and language in self._languages:
+            language_index = self._languages.index(language)
+
+        voice_index = 0
+        if isinstance(voice, str):
+            voice_index = next(
+                (
+                    index
+                    for index, item in enumerate(
+                        self._voices_for_language(self._languages[language_index])
+                    )
+                    if item.name == voice
+                ),
+                0,
+            )
+
+        self.settings = SpeechSettings(
+            rate=self._clamp(rate, 0.5, 2.0),
+            volume=self._clamp(volume, 0.0, 1.0),
+            language_index=language_index,
+            voice_index=voice_index,
+            punctuation=punctuation or self.settings.punctuation,
+            verbosity=verbosity or self.settings.verbosity,
+        )
+        self._sync_driver_configuration()
+
+    def saved_settings(self) -> dict[str, object]:
+        return {
+            "rate": self.settings.rate,
+            "volume": self.settings.volume,
+            "language": self._selected_language(),
+            "voice": self._selected_voice().name,
+            "punctuation": self.settings.punctuation.value,
+            "verbosity": self.settings.verbosity.value,
+        }
 
     @property
     def last_spoken_text(self) -> str | None:
@@ -253,6 +302,8 @@ class SpeechController:
             )
 
         self._sync_driver_configuration()
+        if self._on_settings_changed is not None:
+            self._on_settings_changed()
         if announce:
             self._announce_selected_option()
 
@@ -305,7 +356,9 @@ class SpeechController:
         return 0
 
     def _voices_for_selected_language(self) -> tuple[SynthesisVoice, ...]:
-        language = self._selected_language()
+        return self._voices_for_language(self._selected_language())
+
+    def _voices_for_language(self, language: str) -> tuple[SynthesisVoice, ...]:
         return tuple(voice for voice in self._voices if voice.language == language)
 
     def _selected_voice(self) -> SynthesisVoice:
@@ -319,6 +372,22 @@ class SpeechController:
     @staticmethod
     def _clamp(value: float, minimum: float, maximum: float) -> float:
         return min(max(value, minimum), maximum)
+
+    @staticmethod
+    def _number(value: object, fallback: float) -> float:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        return fallback
+
+    @staticmethod
+    def _enum_value(enum_type: type[T], value: object) -> T | None:
+        if not isinstance(value, str):
+            return None
+        enum_class: Any = enum_type
+        return next(
+            (member for member in enum_class.__members__.values() if member.value == value),
+            None,
+        )
 
     @staticmethod
     def _percent(value: float) -> int:

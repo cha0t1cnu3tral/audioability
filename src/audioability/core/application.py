@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from enum import StrEnum
+from typing import TypeVar
 
 from audioability.accessibility.backends import (
     AccessibilityBackend,
@@ -11,6 +12,7 @@ from audioability.accessibility.backends import (
 )
 from audioability.accessibility.models import AccessibleNode, CaretNavigation
 from audioability.accessibility.navigation import ObjectNavigationAction, ObjectNavigator
+from audioability.core.settings import SettingsStore
 from audioability.input.commands import (
     Command,
     CommandName,
@@ -30,6 +32,7 @@ from audioability.speech.drivers import (
 )
 
 logger = logging.getLogger(__name__)
+E = TypeVar("E", bound=StrEnum)
 
 
 class InteractionMode(StrEnum):
@@ -52,8 +55,12 @@ class ScreenReaderApplication:
         dry_run: bool = False,
         accessibility_backend: AccessibilityBackend | None = None,
         speech_driver: SpeechDriver | None = None,
+        settings_store: SettingsStore | None = None,
     ) -> None:
         self.dry_run = dry_run
+        self.settings_store = settings_store or SettingsStore()
+        self._settings_enabled = not dry_run or settings_store is not None
+        saved_settings = self.settings_store.load() if self._settings_enabled else {}
         self.speech_driver = speech_driver or (
             NullSpeechDriver() if dry_run else SpeechDispatcherDriver()
         )
@@ -68,16 +75,26 @@ class ScreenReaderApplication:
             len(voices),
             len({voice.language for voice in voices}),
         )
-        self.speech_controller = SpeechController(self.speech_driver, voices=voices)
+        self.speech_controller = SpeechController(
+            self.speech_driver,
+            voices=voices,
+            on_settings_changed=self._save_settings,
+        )
+        self.speech_controller.restore_settings(saved_settings)
         self.current_focus: AccessibleNode | None = None
         self.object_navigator = ObjectNavigator()
         self.quit_requested = False
         self._input_help_active = False
         self._pass_next_key = False
-        self.interaction_mode = InteractionMode.BROWSE
+        self.interaction_mode = self._saved_enum(
+            InteractionMode, saved_settings.get("interaction_mode"), InteractionMode.BROWSE
+        )
         self._focus_mode_auto_entered = False
         self._speech_modes = tuple(SpeechMode)
-        self._speech_mode_index = 0
+        saved_speech_mode = self._saved_enum(
+            SpeechMode, saved_settings.get("speech_mode"), SpeechMode.TALK
+        )
+        self._speech_mode_index = self._speech_modes.index(saved_speech_mode)
         self.router = CommandRouter(
             {
                 "focus": self.speak_current_focus,
@@ -218,15 +235,18 @@ class ScreenReaderApplication:
 
     def cycle_speech_mode(self) -> bool:
         self._speech_mode_index = (self._speech_mode_index + 1) % len(self._speech_modes)
+        self._save_settings()
         logger.info("speech_mode_changed mode=%s", self.speech_mode)
         return self._speak_status(f"Speech mode {self.speech_mode.value}")
 
     def toggle_browse_focus_mode(self) -> bool:
         if self.interaction_mode is InteractionMode.BROWSE:
             self._set_interaction_mode(InteractionMode.FOCUS, automatic=False)
+            self._save_settings()
             return self._speak_command("Focus mode")
 
         self._set_interaction_mode(InteractionMode.BROWSE, automatic=False)
+        self._save_settings()
         return self._speak_command("Browse mode")
 
     def quit(self) -> bool:
@@ -552,6 +572,23 @@ class ScreenReaderApplication:
         if callable(set_browse_mode):
             set_browse_mode(mode is InteractionMode.BROWSE)
         logger.info("interaction_mode_changed mode=%s automatic=%s", mode, automatic)
+
+    def _save_settings(self) -> None:
+        if not self._settings_enabled:
+            return
+        settings = self.speech_controller.saved_settings()
+        settings["interaction_mode"] = self.interaction_mode.value
+        settings["speech_mode"] = self.speech_mode.value
+        self.settings_store.save(settings)
+
+    @staticmethod
+    def _saved_enum(enum_type: type[E], value: object, fallback: E) -> E:
+        if isinstance(value, str):
+            try:
+                return enum_type(value)
+            except ValueError:
+                pass
+        return fallback
 
     @staticmethod
     def _character_at_index(text: str, index: int) -> str:

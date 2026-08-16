@@ -1,6 +1,9 @@
+from pathlib import Path
+
 from audioability.accessibility.models import AccessibleNode, CaretNavigation
 from audioability.accessibility.navigation import ObjectNavigationAction
 from audioability.core.application import InteractionMode, ScreenReaderApplication, SpeechMode
+from audioability.core.settings import SettingsStore
 from audioability.input.commands import Command, CommandName
 from audioability.speech.drivers import NullSpeechDriver
 
@@ -27,6 +30,28 @@ class PausableSpeechDriver(StoppableSpeechDriver):
         self.paused = False
         return True
 
+
+def test_user_settings_survive_a_new_application(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / "settings.json")
+    first_app = ScreenReaderApplication(
+        dry_run=True,
+        speech_driver=NullSpeechDriver(),
+        settings_store=store,
+    )
+
+    first_app.speech_controller.handle_modifier_arrow("capslock", "up", announce=False)
+    first_app.toggle_browse_focus_mode()
+    first_app.cycle_speech_mode()
+
+    second_app = ScreenReaderApplication(
+        dry_run=True,
+        speech_driver=NullSpeechDriver(),
+        settings_store=store,
+    )
+
+    assert second_app.speech_controller.settings.rate == 1.1
+    assert second_app.interaction_mode is InteractionMode.FOCUS
+    assert second_app.speech_mode is SpeechMode.ON_DEMAND
 
 class StoppableBackend:
     def __init__(self) -> None:
