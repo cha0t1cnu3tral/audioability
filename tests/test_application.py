@@ -324,6 +324,21 @@ def test_read_title_window_and_status_bar_commands() -> None:
     ]
 
 
+def test_status_bar_role_matching_accepts_hyphenated_atspi_role() -> None:
+    speech = NullSpeechDriver()
+    app = ScreenReaderApplication(dry_run=True, speech_driver=speech)
+    app.object_navigator.set_root(
+        AccessibleNode(
+            name="Downloads",
+            role="frame",
+            children=(AccessibleNode(name="Ready", role="status-bar"),),
+        )
+    )
+
+    assert app.handle_command(Command(CommandName.READ_STATUS_BAR, "Read status")) is True
+    assert speech.messages[-1] == "Ready status-bar"
+
+
 def test_sr_space_toggles_browse_and_focus_modes() -> None:
     speech = NullSpeechDriver()
     app = ScreenReaderApplication(dry_run=True, speech_driver=speech)

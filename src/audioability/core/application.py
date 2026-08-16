@@ -843,7 +843,11 @@ class ScreenReaderApplication:
         node: AccessibleNode,
         roles: frozenset[str] | set[str],
     ) -> AccessibleNode | None:
-        if node.role.casefold() in roles:
+        normalized_roles = {
+            role.casefold().replace("-", " ")
+            for role in roles
+        }
+        if node.role.casefold().replace("-", " ") in normalized_roles:
             return node
 
         for child in node.children:

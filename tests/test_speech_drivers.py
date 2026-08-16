@@ -192,3 +192,27 @@ def test_speech_dispatcher_lists_all_native_synthesis_voices() -> None:
         SynthesisVoice("English+Alex", "en", "Alex"),
         SynthesisVoice("English+Annie", "en", "Annie"),
     )
+
+
+def test_speech_dispatcher_keeps_first_voice_when_listing_has_no_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = "English+Alex".ljust(42) + "en".ljust(26) + "Alex"
+    second = "English+Annie".ljust(42) + "en".ljust(26) + "Annie"
+
+    monkeypatch.setattr(shutil, "which", lambda executable: "/usr/bin/spd-say")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, *, check, capture_output, text: subprocess.CompletedProcess(
+            command, 0, stdout=f"{first}\n{second}\n"
+        ),
+    )
+
+    driver = SpeechDispatcherDriver()
+    driver._client_checked = True
+
+    assert driver.available_voices() == (
+        SynthesisVoice("English+Alex", "en", "Alex"),
+        SynthesisVoice("English+Annie", "en", "Annie"),
+    )

@@ -160,16 +160,26 @@ class SpeechDispatcherDriver:
         except OSError:
             return (SynthesisVoice("default", "default"),)
 
-        catalog = tuple(
+        catalog = self._parse_voice_list(result.stdout)
+        return tuple(dict.fromkeys(catalog)) or (SynthesisVoice("default", "default"),)
+
+    @staticmethod
+    def _parse_voice_list(output: str) -> tuple[SynthesisVoice, ...]:
+        """Parse Speech Dispatcher's fixed-width voice listing."""
+
+        lines = output.splitlines()
+        if lines and lines[0].casefold().startswith("name"):
+            lines = lines[1:]
+
+        return tuple(
             SynthesisVoice(
                 name=line[:42].strip(),
                 language=line[42:68].strip() or "default",
                 variant=line[68:].strip(),
             )
-            for line in result.stdout.splitlines()[1:]
+            for line in lines
             if line[:42].strip()
         )
-        return tuple(dict.fromkeys(catalog)) or (SynthesisVoice("default", "default"),)
 
     def _get_client(self) -> Any | None:
         if self._client_checked:
