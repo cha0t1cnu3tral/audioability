@@ -985,6 +985,55 @@ def test_atspi_backend_masks_inserted_password_text() -> None:
     assert inserted == ["star star"]
 
 
+def test_atspi_backend_ignores_object_placeholders_in_inserted_text() -> None:
+    inserted: list[str] = []
+    backend = AtSpiAccessibilityBackend(on_text_insert=inserted.append)
+    source = SimpleNamespace(getRoleName=lambda: "section")
+
+    backend._handle_event(
+        SimpleNamespace(
+            type="object:text-changed:insert",
+            source=source,
+            detail1=0,
+            detail2=3,
+            any_data="\ufffcHello\ufffc",
+        )
+    )
+
+    assert inserted == ["Hello"]
+
+
+def test_atspi_backend_ignores_inserted_text_made_only_of_object_placeholders() -> None:
+    inserted: list[str] = []
+    backend = AtSpiAccessibilityBackend(on_text_insert=inserted.append)
+    source = SimpleNamespace(getRoleName=lambda: "section")
+
+    backend._handle_event(
+        SimpleNamespace(
+            type="object:text-changed:insert",
+            source=source,
+            detail1=0,
+            detail2=1,
+            any_data="\ufffc",
+        )
+    )
+
+    assert inserted == []
+
+
+def test_atspi_backend_contains_stale_accessible_property_errors() -> None:
+    class StaleSource:
+        @property
+        def childCount(self) -> int:
+            raise RuntimeError("object disappeared")
+
+    backend = AtSpiAccessibilityBackend()
+
+    node = backend._read_node(StaleSource(), depth=1)
+
+    assert node.child_count == 0
+
+
 def test_atspi_backend_reads_children_from_indexable_container() -> None:
     nodes: list[AccessibleNode] = []
     backend = AtSpiAccessibilityBackend(on_focus=nodes.append)

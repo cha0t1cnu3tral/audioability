@@ -1244,7 +1244,7 @@ class AtSpiAccessibilityBackend:
 
     @staticmethod
     def _read_text_attribute(source: Any, attribute: str) -> str:
-        value = getattr(source, attribute, "")
+        value = AtSpiAccessibilityBackend._safe_getattr(source, attribute, "")
         return value if isinstance(value, str) else ""
 
     @staticmethod
@@ -1262,7 +1262,7 @@ class AtSpiAccessibilityBackend:
             return ""
 
         for attribute in ("currentValue", "minimumValue", "maximumValue"):
-            value = getattr(value_interface, attribute, None)
+            value = self._safe_getattr(value_interface, attribute)
             if isinstance(value, int | float):
                 return self._format_number(value)
 
@@ -1278,7 +1278,7 @@ class AtSpiAccessibilityBackend:
         if text_interface is None:
             return ""
 
-        character_count = getattr(text_interface, "characterCount", 0)
+        character_count = self._safe_getattr(text_interface, "characterCount", 0)
         if not isinstance(character_count, int) or character_count <= 0:
             return ""
 
@@ -1387,9 +1387,19 @@ class AtSpiAccessibilityBackend:
                     value = self._safe_call(get_text, offset, offset + length)
                     text = value if isinstance(value, str) else ""
 
+        text = self._clean_inserted_text(text)
         if text:
             logger.debug("text_insert text=%r role=%r", text, role)
             self.on_text_insert(text)
+
+    @staticmethod
+    def _clean_inserted_text(text: str) -> str:
+        """Remove AT-SPI object placeholders and other non-speech controls."""
+        return "".join(
+            character
+            for character in text
+            if character != "\ufffc" and (character.isprintable() or character in "\n\t ")
+        )
 
     def _handle_caret_move(self, event: Any) -> None:
         if self.on_caret_move is None or self._last_caret_gesture is None:
@@ -1407,7 +1417,7 @@ class AtSpiAccessibilityBackend:
         source = getattr(event, "source", None)
         role = self._read_role(source).casefold()
         text_interface = self._query_interface(source, "queryText")
-        character_count = getattr(text_interface, "characterCount", 0)
+        character_count = self._safe_getattr(text_interface, "characterCount", 0)
         if not isinstance(character_count, int) or character_count < 0:
             return
 
@@ -1568,8 +1578,15 @@ class AtSpiAccessibilityBackend:
 
     @staticmethod
     def _read_child_count(source: Any) -> int:
-        child_count = getattr(source, "childCount", 0)
+        child_count = AtSpiAccessibilityBackend._safe_getattr(source, "childCount", 0)
         return child_count if isinstance(child_count, int) and child_count > 0 else 0
+
+    @staticmethod
+    def _safe_getattr(source: Any, attribute: str, default: Any = None) -> Any:
+        try:
+            return getattr(source, attribute, default)
+        except Exception:
+            return default
 
     @staticmethod
     def _query_interface(source: Any, name: str) -> Any | None:
